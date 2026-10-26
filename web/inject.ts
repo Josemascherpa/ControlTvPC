@@ -132,15 +132,21 @@
   const isEditable = (el: Element | null): boolean =>
     el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
-  const visibleRect = (el: Element): DOMRect | null => {
+  /** Su lugar en pantalla, si es un blanco posible (con tamaño y a menos de una pantalla de distancia). */
+  const nearRect = (el: Element): DOMRect | null => {
     const r = el.getBoundingClientRect();
     if (r.width < 4 || r.height < 4) return null;
-    // Sólo lo que está en pantalla o a menos de una pantalla de distancia.
     if (r.bottom < -innerHeight || r.top > innerHeight * 2 || r.right < 0 || r.left > innerWidth) return null;
-    const style = getComputedStyle(el);
-    if (style.visibility === 'hidden' || style.opacity === '0' || el.closest('[aria-hidden=true], [inert]')) return null;
     return r;
   };
+  /** Revisar el estilo es lo caro: se hace sólo con los pocos mejores candidatos, no con todos. */
+  const isShown = (el: Element): boolean => {
+    const style = getComputedStyle(el);
+    return style.visibility !== 'hidden' && style.opacity !== '0' && !el.closest('[aria-hidden=true], [inert]');
+  };
+  // Una flecha mantenida apretada repite muy rápido: no se procesa más de una por cuadro de pantalla.
+  const REPEAT_GAP_MS = 45;
+  let lastMove = 0;
 
   let marked: HTMLElement | null = null;
   const mark = (el: HTMLElement): void => {
@@ -163,27 +169,32 @@
     // Adentro de un campo de texto, izquierda/derecha mueven el cursor del texto.
     if (isEditable(active) && dirX !== 0) return;
 
-    const from = active && active !== document.body ? visibleRect(active) : null;
+    if (event.repeat && performance.now() - lastMove < REPEAT_GAP_MS) {
+      event.preventDefault();
+      return;
+    }
+
+    // Primero sólo se leen posiciones (barato y todas juntas, sin cambiar nada en el medio).
+    const from = active && active !== document.body ? nearRect(active) : null;
     const ox = from ? from.left + from.width / 2 : innerWidth / 2;
     const oy = from ? from.top + from.height / 2 : dirY > 0 ? 0 : innerHeight;
-    let best: HTMLElement | null = null;
-    let bestScore = Infinity;
+    const candidates: { el: HTMLElement; score: number }[] = [];
     for (const el of document.querySelectorAll<HTMLElement>(FOCUSABLE)) {
       if (el === active || (el instanceof HTMLButtonElement && el.disabled)) continue;
-      const r = visibleRect(el);
+      const r = nearRect(el);
       if (!r) continue;
       const dx = r.left + r.width / 2 - ox;
       const dy = r.top + r.height / 2 - oy;
       const along = dx * dirX + dy * dirY; // cuánto avanza en la dirección pedida
       if (along <= 2) continue;
-      const score = along + (Math.abs(dx * dirY) + Math.abs(dy * dirX)) * 2.5; // penaliza desviarse
-      if (score < bestScore) {
-        bestScore = score;
-        best = el;
-      }
+      candidates.push({ el, score: along + (Math.abs(dx * dirY) + Math.abs(dy * dirX)) * 2.5 }); // penaliza desviarse
     }
+    // Después, del más cercano al más lejano, el primero que de verdad se ve.
+    candidates.sort((a, b) => a.score - b.score);
+    const best = candidates.find((c) => isShown(c.el))?.el;
     if (!best) return;
     event.preventDefault();
+    lastMove = performance.now();
     mark(best);
   });
 
@@ -216,6 +227,7 @@
     };
     addEventListener('load', calm);
     setInterval(calm, 4000);
+
   }
 
   // ---------- Capa de dibujo (arriba de todo) ----------

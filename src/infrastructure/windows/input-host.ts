@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessByStdio } from 'child_process';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { createInterface } from 'readline';
 import type { Readable, Writable } from 'stream';
@@ -7,6 +8,15 @@ import { SM, win32 } from './win32';
 
 /** Ancho de referencia (en píxeles) para el que está calibrada la velocidad del cursor. */
 const REFERENCE_WIDTH = 1366;
+/** Si el ayudante no contesta una pregunta en este tiempo, se sigue sin la respuesta. */
+const REQUEST_TIMEOUT_MS = 3000;
+
+/** Una pregunta esperando su línea de respuesta (las respuestas llegan en el mismo orden). */
+interface Waiting {
+  resolve: (line: string | null) => void;
+  /** Ya se respondió (por tiempo vencido): la línea que llegue tarde se descarta en su lugar. */
+  done: boolean;
+}
 
 type Helper = ChildProcessByStdio<Writable, Readable, null>;
 
@@ -27,7 +37,9 @@ export class InputHost implements LineChannel {
   private process: Helper | null = null;
   private locked = false;
   private tvPid = 0;
-  private readonly waiting: ((line: string | null) => void)[] = [];
+  private readonly waiting: Waiting[] = [];
+  /** Movimiento del puntero acumulado mientras el canal está lleno (se suman, no se encolan). */
+  private pendingMove: { dx: number; dy: number } | null = null;
 
   constructor(private readonly scriptsDir: string, private readonly log: Logger) {}
 
@@ -35,13 +47,49 @@ export class InputHost implements LineChannel {
     this.ensure().stdin.write(`${command}\n`);
   }
 
-  /** Manda una orden que tiene respuesta (las de volumen) y espera esa línea. */
+  /**
+   * Movimiento relativo del puntero. Si el ayudante se atrasa (canal lleno), los movimientos se
+   * suman y se mandan juntos cuando se libera: nunca se acumula una cola de movimientos viejos.
+   */
+  move(dx: number, dy: number): void {
+    const helper = this.ensure();
+    if (this.pendingMove) {
+      this.pendingMove.dx += dx;
+      this.pendingMove.dy += dy;
+      return;
+    }
+    if (helper.stdin.writableNeedDrain) {
+      this.pendingMove = { dx, dy };
+      helper.stdin.once('drain', () => {
+        const move = this.pendingMove;
+        this.pendingMove = null;
+        if (move) this.move(move.dx, move.dy);
+      });
+      return;
+    }
+    helper.stdin.write(`move ${dx.toFixed(2)} ${dy.toFixed(2)}\n`);
+  }
+
+  /** Manda una orden que tiene respuesta (volumen, nivel de sonido) y espera esa línea (con tiempo máximo). */
   request(command: string): Promise<string | null> {
     const helper = this.ensure();
     return new Promise((resolve) => {
-      this.waiting.push(resolve);
+      const entry: Waiting = { resolve, done: false };
+      this.waiting.push(entry);
+      setTimeout(() => {
+        if (entry.done) return;
+        entry.done = true;
+        resolve(null);
+      }, REQUEST_TIMEOUT_MS).unref();
       helper.stdin.write(`${command}\n`);
     });
+  }
+
+  /** El nivel de lo que está sonando ahora (0 a 1), o null si no se pudo leer. */
+  async audioPeak(): Promise<number | null> {
+    const line = await this.request('peak');
+    const value = line === null ? NaN : Number.parseFloat(line);
+    return Number.isFinite(value) && value >= 0 ? value : null;
   }
 
   /** El proceso de Edge que hace de tele: el bloqueo sólo actúa con su ventana al frente. */
@@ -57,17 +105,25 @@ export class InputHost implements LineChannel {
 
   private ensure(): Helper {
     if (this.process) return this.process;
-    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(this.scriptsDir, 'input-host.ps1')], {
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'ignore'],
-    });
+    // Lo normal: el .exe compilado una vez (build-native.ps1), que arranca en ~0,3 s. Si no está, el
+    // .ps1 compila el mismo código al vuelo (~2,5 s).
+    const exe = join(this.scriptsDir, 'input-host.exe');
+    const [command, args] = existsSync(exe)
+      ? [exe, []]
+      : ['powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(this.scriptsDir, 'input-host.ps1')]];
+    const child = spawn(command, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
     createInterface({ input: child.stdout }).on('line', (line) => {
-      this.waiting.shift()?.(line);
+      const entry = this.waiting.shift();
+      if (entry && !entry.done) {
+        entry.done = true;
+        entry.resolve(line);
+      }
     });
     child.on('exit', () => {
       if (this.process !== child) return;
       this.process = null;
-      for (const resolve of this.waiting.splice(0)) resolve(null);
+      for (const entry of this.waiting.splice(0)) if (!entry.done) entry.resolve(null);
+      this.pendingMove = null;
       this.log.warn('El ayudante nativo se cerró; se reabre en el próximo uso');
     });
     child.stdin.on('error', () => {
@@ -88,7 +144,7 @@ export class NativePointer implements PointerSurface {
   constructor(private readonly host: InputHost) {}
 
   moveBy(dx: number, dy: number): Promise<void> {
-    this.host.send(`move ${(dx * this.scale).toFixed(2)} ${(dy * this.scale).toFixed(2)}`);
+    this.host.move(dx * this.scale, dy * this.scale);
     return Promise.resolve();
   }
 

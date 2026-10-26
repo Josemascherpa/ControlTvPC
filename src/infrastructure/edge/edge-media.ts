@@ -5,7 +5,7 @@ export class EdgeMedia {
   constructor(private readonly edge: EdgeConnection) {}
 
   async isPlaying(): Promise<boolean> {
-    if (!this.edge.isReady) return false;
+    if (!this.edge.isReady) return false; // Edge cerrado: no hay nada reproduciéndose en la tele
     try {
       const { result } = await this.edge.page('Runtime.evaluate', {
         expression: "[...document.querySelectorAll('video, audio')].some((m) => !m.paused && !m.ended && m.readyState > 2)"
@@ -14,7 +14,7 @@ export class EdgeMedia {
       });
       return result.value === true;
     } catch {
-      return false; // si Edge no contesta, no bloqueamos el ahorro por eso
+      return true; // si Edge no contesta, no se sabe: mejor no pasar a ahorro en medio de un video
     }
   }
 }

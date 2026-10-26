@@ -5,7 +5,8 @@
   "description": "ControlTv PC: convierte la notebook en una Smart TV manejada desde el celular",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
+    "build": "tsc -p tsconfig.json && tsc -p web/tsconfig.json && npm run build:native",
+    "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -File native/build-native.ps1",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "lint": "eslint .",
     "check": "npm run typecheck && npm run lint",

@@ -1,10 +1,15 @@
 import { byId, el, wait } from './dom.js';
 
-const EXPAND_MS = 420;
+/**
+ * Cuándo se pide abrir la app, con la animación ya empezada. No se espera a que termine (eran
+ * 420 ms de demora de más): la app empieza a cargar mientras el círculo cubre la pantalla, y el
+ * margen alcanza para que la animación llegue a verse antes de que cambie la página.
+ */
+const OPEN_AFTER_MS = 140;
 
 /**
  * Animación al abrir una app: desde la tarjeta elegida crece un círculo del color de la app que
- * cubre la pantalla, con su ícono y nombre en el medio. Recién ahí se pide abrir la app.
+ * cubre la pantalla, con su ícono y nombre en el medio, mientras la app ya se está abriendo.
  */
 export class AppLauncher {
   private readonly stage = byId('launch');
@@ -39,7 +44,7 @@ export class AppLauncher {
     // Forzar el cálculo del estado inicial hace que la animación arranque ya, sin esperar cuadros.
     void this.stage.offsetWidth;
     this.stage.classList.add('go');
-    await wait(EXPAND_MS);
+    await wait(OPEN_AFTER_MS);
     this.open(app.id);
     // Si por algún motivo la app no abre, a los segundos volvemos a mostrar el inicio.
     await wait(4000);

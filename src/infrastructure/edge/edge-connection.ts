@@ -31,6 +31,12 @@ const REOPEN_DELAY_MS = 1500;
 const SAFETY_CHECK_MS = 15_000;
 /** Cada cuánto se revisa que la ventana siga a pantalla completa (es una consulta instantánea). */
 const FULLSCREEN_CHECK_MS = 2000;
+/** Cada cuánto se pregunta si la página responde, cuánto se le espera, y cuántas faltas seguidas reabren Edge. */
+const HEALTH_CHECK_MS = 10_000;
+const HEALTH_TIMEOUT_MS = 5000;
+const HEALTH_MAX_FAILURES = 3;
+/** Entre dos reaperturas por cuelgue, como mínimo (para no entrar en un ciclo si el problema sigue). */
+const HANG_RESTART_GAP_MS = 2 * 60_000;
 /** Cuánto esperar después de abrir para revisar la GPU (si se cae, Edge reintenta 3 veces en ~3 s). */
 const GPU_CHECK_DELAY_MS = 8000;
 
@@ -71,6 +77,10 @@ export class EdgeConnection {
   private suspended = false;
   /** Si la GPU falló con las opciones de rendimiento, Edge se reabre sin ellas (las de fábrica). */
   private gpuSafeMode = false;
+  private checkingFullscreen = false;
+  private checkingHealth = false;
+  private healthFailures = 0;
+  private lastHangRestart = 0;
   private defaultUserAgent = '';
   private readonly inject: string;
 
@@ -89,12 +99,38 @@ export class EdgeConnection {
     }, SAFETY_CHECK_MS).unref();
     // La tele siempre a pantalla completa: si por cualquier motivo sale, vuelve sola.
     setInterval(() => void this.keepFullscreen(), FULLSCREEN_CHECK_MS).unref();
+    setInterval(() => void this.checkResponsive(), HEALTH_CHECK_MS).unref();
     this.ensureSoon();
+  }
+
+  /**
+   * Una página colgada no cierra la conexión: hay que preguntarle. Si no contesta varias veces
+   * seguidas, se reabre Edge (y nunca más de una vez cada tanto, por si el problema sigue).
+   */
+  private async checkResponsive(): Promise<void> {
+    if (this.suspended || !this.isReady || this.checkingHealth) return;
+    this.checkingHealth = true;
+    try {
+      const alive = await Promise.race([
+        this.page('Runtime.evaluate', { expression: '1', returnByValue: true }).then(() => true, () => false),
+        sleep(HEALTH_TIMEOUT_MS).then(() => false),
+      ]);
+      this.healthFailures = alive ? 0 : this.healthFailures + 1;
+      if (this.healthFailures < HEALTH_MAX_FAILURES || Date.now() - this.lastHangRestart < HANG_RESTART_GAP_MS) return;
+      this.log.warn('La tele no responde: se reabre Edge');
+      this.healthFailures = 0;
+      this.lastHangRestart = Date.now();
+      await this.client?.send('Browser.close', {}).catch(() => undefined); // al cerrarse, se reabre solo
+    } finally {
+      this.checkingHealth = false;
+    }
   }
 
   /** Si la ventana no está a pantalla completa, la pone. */
   private async keepFullscreen(): Promise<void> {
-    if (this.suspended || !this.isReady || !this.targetId) return;
+    // Si Edge tarda en contestar, no se encima otra revisión mientras tanto.
+    if (this.suspended || !this.isReady || !this.targetId || this.checkingFullscreen) return;
+    this.checkingFullscreen = true;
     try {
       const { windowId } = await this.browser('Browser.getWindowForTarget', { targetId: this.targetId });
       const { bounds } = await this.browser('Browser.getWindowBounds', { windowId });
@@ -105,6 +141,8 @@ export class EdgeConnection {
       await this.browser('Browser.setWindowBounds', { windowId, bounds: { windowState: 'fullscreen' } });
     } catch {
       // Edge se está cerrando o reabriendo: se revisa de nuevo en el próximo intento.
+    } finally {
+      this.checkingFullscreen = false;
     }
   }
 

@@ -68,3 +68,17 @@ Ajustes, en `%LOCALAPPDATA%\ControlTvPC\config.json`:
 
 - `"idleMinutes": 10`: minutos sin uso hasta pasar a ahorro.
 - `"autoPowerPlans": false`: apaga el cambio automático.
+
+## Mínimo del procesador en tu plan "MAXIMO rendimiento" (recomendado)
+
+Tu plan "MAXIMO rendimiento" tiene el procesador **siempre al 100 %**. En una notebook de 2014 eso
+la mantiene caliente todo el tiempo; si se recalienta, Windows le baja la velocidad sola y anda
+**peor**. Con el mínimo en 10 % el turbo sigue subiendo al instante cuando hace falta (el tope y el
+turbo agresivo quedan igual). Para hacerlo, en una terminal:
+
+```bat
+powercfg /setacvalueindex 1a1a1a1a-0000-4000-8000-00000000aa01 SUB_PROCESSOR PROCTHROTTLEMIN 10
+powercfg /setactive 1a1a1a1a-0000-4000-8000-00000000aa01
+```
+
+Para volver a como estaba: el mismo comando con `100` en lugar de `10`.

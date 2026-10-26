@@ -62,8 +62,17 @@ Para sacarlo del inicio automático: `desinstalar.ps1`.
 
 ## Recomendaciones para que vaya fluido
 
-- **Resolución:** la notebook está saliendo en 4096×2160 al 300%. Su placa de video (Intel HD 4400)
-  va mucho mejor en **1920×1080 al 100% o 125%**; el tele lo escala igual y se ve bien.
+- **Resolución:** **1920×1080 a 60 Hz** (así está configurada). En 4096×2160 el HDMI sólo llegaba a
+  29 Hz y todo iba a los tirones. La **escala** (150 %) no cambia el rendimiento: medido igual en
+  100 %, 125 % y 150 % (60 cuadros por segundo; se dibujan los mismos píxeles). El 150 % deja letras
+  y botones de buen tamaño para ver desde el sillón.
+- **Placa de video:** la **Intel HD 4400** (la que está cableada al HDMI). Medido: con ella YouTube
+  1080p60 se decodifica por hardware sin perder cuadros; con la GeForce 840M Edge pierde la
+  decodificación por hardware (2–12 % de cuadros perdidos) y suma un cuadro de demora. La GeForce
+  sólo gana en gráficos 3D, que estas apps no usan. Se puede probar en Ajustes → Placa de video.
+- **Plan de energía "Máximo":** tiene el mínimo del procesador en 100 %. En una notebook vieja eso
+  la calienta siempre y, si se recalienta, baja sola su velocidad. Con el mínimo en 5–10 % el turbo
+  sube igual al instante cuando hace falta (ver `optimizacion/LEEME.md`).
 - En *Opciones de energía*, que al **cerrar la tapa** no haga nada (la app ya evita que se suspenda).
 - La sesión de Netflix, YouTube, etc. queda guardada: se inicia una sola vez (con el touchpad).
 

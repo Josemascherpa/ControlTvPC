@@ -2,6 +2,7 @@
 // sus dependencias por el constructor (inyección de dependencias a mano, como el AppContainer de
 // la app Android). Todo lo demás depende sólo de interfaces (la "D" de SOLID).
 
+import { join } from 'path';
 import { HOME_URL, PATHS, PORTS } from './config/paths';
 import { PhoneAccess } from './application/phone-access';
 import { IdlePowerService } from './application/idle-power-service';
@@ -34,6 +35,7 @@ import { SystemActivity } from './infrastructure/windows/system-activity';
 import { WindowsPowerPlans } from './infrastructure/windows/windows-power-plans';
 import { OsNetwork } from './infrastructure/windows/os-network';
 import { WindowsDisplay, WindowsMediaKeys } from './infrastructure/windows/windows-display';
+import { SM, win32 } from './infrastructure/windows/win32';
 
 async function main(): Promise<void> {
   // ---- Infraestructura ----
@@ -64,7 +66,11 @@ async function main(): Promise<void> {
     weather: new OpenMeteoProvider(),
     dollar: new DolarApiProvider(),
     news: new GoogleNewsProvider(),
-    backgrounds: new BingBackgrounds(PATHS.backgrounds),
+    // Fondos al tamaño real de la pantalla (píxeles físicos, no los escalados de Windows).
+    backgrounds: new BingBackgrounds(PATHS.backgrounds, join(PATHS.nativeScripts, 'resize-image.ps1'), {
+      width: win32.getSystemMetrics(SM.CXSCREEN),
+      height: win32.getSystemMetrics(SM.CYSCREEN),
+    }),
   }, settings, PATHS.homeCache, log);
   const icons = new AppIcons(PATHS.icons, PATHS.bundledIcons, apps);
 
@@ -80,7 +86,7 @@ async function main(): Promise<void> {
   const pointer = new PointerService(pointerSurface, settings, log);
   const sessions = new PhoneSessions(access, power, overlay, log);
   const media = new EdgeMedia(edge);
-  const idlePower = new IdlePowerService(new WindowsPowerPlans(), new SystemActivity(() => media.isPlaying()), power, settings, log);
+  const idlePower = new IdlePowerService(new WindowsPowerPlans(), new SystemActivity(() => media.isPlaying(), () => inputHost.audioPeak()), power, settings, log);
 
   // El servidor recibe funciones (no los objetos) para lo que se arma después: así no hay
   // dependencias circulares entre el servidor y quien le publica avisos.
