@@ -1,0 +1,22 @@
+{
+  // Pantalla de inicio y script que se mete en cada página (corren en Edge).
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "rootDir": ".",
+    "outDir": "../ui/js",
+    "types": [],
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "useUnknownInCatchVariables": true,
+    "skipLibCheck": true
+  },
+  "include": ["**/*.ts", "../shared/**/*.d.ts"]
+}

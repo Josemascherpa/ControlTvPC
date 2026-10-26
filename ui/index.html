@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <title>ControlTv</title>
+  <!-- Ícono de la ventana y de la barra de tareas -->
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="icon" type="image/png" sizes="256x256" href="icon-256.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
+  <link rel="preload" href="fonts/inter.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Fondo: dos capas que se cruzan suavemente al cambiar de foto -->
+  <img class="bg" id="bg-a" alt="">
+  <img class="bg" id="bg-b" alt="">
+  <div class="scrim"></div>
+
+  <main id="home">
+    <!-- Arriba: saludo a la izquierda; estado y ajustes en una sola cápsula a la derecha -->
+    <header class="top reveal" style="--i:0">
+      <div class="greeting" id="greeting">Hola</div>
+      <div class="chips">
+        <div class="chip" id="chip-weather"></div>
+        <div class="chip" id="chip-volume"></div>
+        <div class="chip" id="chip-phone"></div>
+        <button class="chip icon-chip" id="btn-settings" aria-label="Ajustes">
+          <svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.4 4.6-1.6-.9a6.9 6.9 0 0 0 0-2.4l1.6-.9a.6.6 0 0 0 .2-.8l-1.6-2.8a.6.6 0 0 0-.8-.2l-1.6.9a7 7 0 0 0-2.1-1.2V3a.6.6 0 0 0-.6-.6h-3.2A.6.6 0 0 0 9.6 3v1.8a7 7 0 0 0-2.1 1.2l-1.6-.9a.6.6 0 0 0-.8.2L3.5 8.1a.6.6 0 0 0 .2.8l1.6.9a6.9 6.9 0 0 0 0 2.4l-1.6.9a.6.6 0 0 0-.2.8l1.6 2.8c.2.3.5.4.8.2l1.6-.9a7 7 0 0 0 2.1 1.2V19c0 .3.3.6.6.6h3.2c.3 0 .6-.3.6-.6v-1.8a7 7 0 0 0 2.1-1.2l1.6.9c.3.2.6.1.8-.2l1.6-2.8a.6.6 0 0 0-.2-.8Z" fill="currentColor"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Todo lo de abajo se desplaza hacia arriba al bajar con las flechas (como tvOS) -->
+    <div class="home-viewport">
+      <div class="home-scroll" id="home-scroll">
+        <!-- El reloj, protagonista -->
+        <section class="hero reveal" style="--i:1">
+          <div class="clock" id="clock">--:--</div>
+          <div class="date" id="date"></div>
+          <p class="summary" id="summary"></p>
+          <div class="onboarding" id="onboarding" hidden>
+            <span class="onb-dot"></span>
+            <span>Abrí <b>ControlTv</b> en el celular, en el mismo WiFi, y elegí <b id="onb-name"></b>.</span>
+          </div>
+        </section>
+
+        <!-- Tus apps, una fila por categoría (las arma el código) -->
+        <div class="rows reveal" id="apps-rows" style="--i:2"></div>
+
+        <div class="rows">
+          <div class="row reveal" id="today-row" style="--i:3">
+            <h2>Hoy</h2>
+            <div class="track" id="info"></div>
+            <span class="row-arrow left"></span><span class="row-arrow right"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Aviso de que hay más categorías abajo (se va al llegar a la última) -->
+    <button class="more-down" id="more-down" tabindex="-1"><span>Más categorías</span><i></i></button>
+  </main>
+
+  <!-- Todas las apps, por categoría -->
+  <section id="library" hidden>
+    <header class="library-head">
+      <h3>Todas las apps</h3>
+      <p>OK abre · <b>Menú</b> agrega o quita del inicio · Atrás vuelve</p>
+    </header>
+    <div class="library-viewport"><div class="library-sections" id="library-sections"></div></div>
+  </section>
+
+  <!-- Opciones de una app (botón Menú) -->
+  <div id="app-menu" hidden>
+    <div class="menu-card">
+      <div class="menu-title" id="app-menu-title"></div>
+      <div class="menu-list" id="app-menu-list"></div>
+    </div>
+  </div>
+
+  <!-- Modo ambiente: aparece solo cuando nadie usa la tele por un rato -->
+  <div id="ambient">
+    <div class="amb-clock" id="amb-clock"></div>
+    <div class="amb-date" id="amb-date"></div>
+    <div class="amb-weather" id="amb-weather"></div>
+  </div>
+  <footer class="caption" id="caption"></footer>
+
+  <!-- Ajustes -->
+  <aside class="panel" id="settings" hidden>
+    <h3>Ajustes</h3>
+    <div class="panel-list" id="settings-list"></div>
+  </aside>
+
+  <!-- Animación al abrir una app -->
+  <div id="launch" hidden></div>
+
+  <script type="module" src="js/home/main.js"></script>
+</body>
+</html>
