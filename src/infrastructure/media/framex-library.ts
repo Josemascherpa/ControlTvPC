@@ -17,7 +17,7 @@ const RAIL_ITEMS = 20;
 const SEARCH_ITEMS = 24;
 /** Los servidores que primero se prueban al pedir "Reproducir" (el resto queda para elegir a mano). */
 const PROVIDER_PREFERENCE = [
-  'royal_champion', 'titan', 'super_barbarian', 'little_prince', 'archer_queen',
+  'royal_champion', 'titan', 'super_dragon', 'super_barbarian', 'little_prince', 'archer_queen',
   'battle_copter', 'executioner', 'giant', 'bowler', 'root_rider',
 ] as const;
 const RAILS = [
@@ -445,7 +445,7 @@ export class FramexLibrary implements MediaLibrary {
     if (list.error) return list;
     const available = list.providers ?? [];
     if (!available.length) return rejected('No hay servidores disponibles ahora.');
-    const candidates = available.filter((provider) => !exclude.has(provider.id)).slice(0, 4);
+    const candidates = available.filter((provider) => !exclude.has(provider.id)).slice(0, 5);
     if (!candidates.length) return rejected('No quedan más servidores para probar.');
     const results = await Promise.all(candidates.map(async (provider): Promise<Contracts.LibraryReply | null> => {
       try {

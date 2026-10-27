@@ -808,7 +808,13 @@ function selectSpanishAudio(engine: Hls, source: Contracts.LibrarySource): void 
     return isSpanish(lang) || isSpanish(name);
   });
   const selected = tracks[index];
-  if (selected) engine.audioTrack = index;
+  if (selected) {
+    engine.audioTrack = index;
+    return;
+  }
+  // Algunos manifiestos no traen idioma en las pistas: usar el orden que anunció la API.
+  const wantedIndex = wanted ? (source.audioTracks ?? []).indexOf(wanted) : -1;
+  if (wantedIndex >= 0 && wantedIndex < tracks.length) engine.audioTrack = wantedIndex;
 }
 
 async function startVideo(source: Contracts.LibrarySource, subtitles: readonly Contracts.LibrarySubtitle[], token: number): Promise<void> {

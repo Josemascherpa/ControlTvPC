@@ -113,7 +113,7 @@ carga la web del proveedor ni se ejecuta su JavaScript: sólo se validan los dat
   ciencia ficción, suspenso) + portada. Las tarjetas piden la portada `w342` y la ficha `w780`
   (no `w500`/`w1280`): menos bytes y menos memoria en la HD 4400. Sinopsis sólo en la ficha.
 - **Servidores:** `providers` se cachea 60 s y se muestran sólo los `available` que no son
-  `clientOnly` (ejecutan código en el navegador). Al pedir "Reproducir" se prueban hasta 4 en
+  `clientOnly` (ejecutan código en el navegador). Al pedir "Reproducir" se prueban hasta 5 en
   paralelo y se usa el primero por orden de preferencia; si la reproducción falla, el reproductor
   pide otro con `exclude`. La lista de servidores cambia: no fijar ids en el código del cliente.
 - **Subtítulos:** la API entrega VTT de `*.strem.io` y `*.vdrk.site`; se piden por `/api/subtitle`
