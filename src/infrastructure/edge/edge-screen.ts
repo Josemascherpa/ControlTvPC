@@ -86,11 +86,12 @@ export class EdgeScreen implements TvScreen {
   /** "Atrás": cierra lo abierto, vuelve a la página anterior o, si no hay, al inicio. */
   async back(): Promise<void> {
     if (this.atHome) return this.pressKey('ESCAPE'); // el inicio cierra el panel que esté abierto
+    // Primero lo que esté encima: video a pantalla completa, o la ficha abierta del sitio (modo TV).
     const { result } = await this.edge.page('Runtime.evaluate', {
-      expression: 'document.fullscreenElement ? (document.exitFullscreen(), true) : false',
+      expression: 'document.fullscreenElement ? (document.exitFullscreen(), true) : (window.__controlTvBack ? window.__controlTvBack() : false)',
       returnByValue: true,
     });
-    if (result.value === true) return undefined; // salimos del video a pantalla completa
+    if (result.value === true) return undefined;
     if (this.current?.back === 'escape') return this.pressKey('ESCAPE');
 
     const { currentIndex, entries } = await this.edge.page('Page.getNavigationHistory', {});
@@ -134,9 +135,14 @@ export class EdgeScreen implements TvScreen {
     await this.edge.bringToFront();
   }
 
+  /**
+   * El "disfraz" de Smart TV (YouTube) o ninguno. Para volver a lo normal se QUITA el disfraz (texto
+   * vacío): si en cambio se pone el texto normal, Edge deja de mandar sus datos de identificación
+   * (marca, plataforma, versiones) y los sitios ven un dispositivo distinto. Medido: Netflix cerraba
+   * la sesión por eso cada vez que se volvía a entrar.
+   */
   private async setUserAgent(userAgent: string | null): Promise<void> {
-    if (!this.edge.userAgent) return;
-    await this.edge.page('Network.setUserAgentOverride', { userAgent: userAgent ?? this.edge.userAgent }).catch(() => undefined);
+    await this.edge.page('Network.setUserAgentOverride', { userAgent: userAgent ?? '' }).catch(() => undefined);
   }
 
   // Si la persona navega con el cursor a otra página, actualizamos en qué app estamos.

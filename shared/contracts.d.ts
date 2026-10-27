@@ -118,4 +118,6 @@ declare namespace Contracts {
 
 interface Window {
   __controlTv?: Contracts.Overlay;
+  /** Botón Atrás: si el sitio tiene algo abierto encima (una ficha), lo cierra y devuelve true. */
+  __controlTvBack?: () => boolean;
 }

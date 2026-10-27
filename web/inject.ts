@@ -73,6 +73,9 @@
       transition: transform .18s ${EASE}; }
     #ctv-layer .ctv-num { min-width: 3.2vw; text-align: right; font-variant-numeric: tabular-nums; }
     [data-ctv-scrolling] body, [data-ctv-scrolling] body * { pointer-events: none !important; }
+    [data-ctv-focus="tv"] { outline: .45vh solid #fff !important; outline-offset: .35vh !important; box-shadow: 0 1.2vh 3vh rgba(0,0,0,.6) !important;
+      transform: scale(1.06); transition: transform .18s ${EASE}, outline-offset .18s ${EASE}; z-index: 5; position: relative;
+      border-radius: .6vh; animation: none; }
   `;
 
   // Hoja de estilos "construida" desde JS: no la frena la política de seguridad (CSP) de las páginas.
@@ -166,6 +169,134 @@
     marked?.removeAttribute('data-ctv-focus');
     marked = null;
   }, { capture: true, passive: true });
+
+  // ---------- Modo TV por sitio (como las apps de un Chromecast) ----------
+  // Para los sitios grandes de streaming, en vez de "el botón más cercano", una grilla de TV: filas
+  // (arriba/abajo, recordando la columna) y elementos dentro de la fila (izquierda/derecha); al llegar
+  // al borde, la fila pasa de página sola. Cada sitio dice cuáles son sus filas (un "adaptador").
+  interface TvAdapter {
+    /** Las filas navegables, de arriba hacia abajo (cada una, sus elementos de izquierda a derecha). */
+    rows(): readonly (readonly HTMLElement[])[];
+    /** Si hay algo abierto encima (una ficha), lo cierra y devuelve true. Lo usa el botón Atrás. */
+    closeOverlay(): boolean;
+    /** El botón de la fila que pasa a la página siguiente/anterior, si tiene. */
+    pager?(item: HTMLElement, direction: 1 | -1): HTMLElement | null;
+    /** No intervenir (ej. mientras se mira un video, el sitio maneja sus teclas). */
+    paused?(): boolean;
+  }
+
+  const visible = (el: HTMLElement): boolean => {
+    const r = el.getBoundingClientRect();
+    return r.width > 4 && r.height > 4;
+  };
+
+  const NETFLIX: TvAdapter = {
+    rows() {
+      const modal = document.querySelector<HTMLElement>('[role="dialog"], [data-uia*="previewModal"]');
+      if (modal && visible(modal)) {
+        // Con una ficha abierta: sus botones y sus episodios/similares, agrupados por altura.
+        const items = [...modal.querySelectorAll<HTMLElement>('button, a[href], [tabindex="0"]')].filter(visible);
+        const byLine = new Map<number, HTMLElement[]>();
+        for (const item of items) {
+          const line = Math.round(item.getBoundingClientRect().top / 40);
+          byLine.set(line, [...(byLine.get(line) ?? []), item]);
+        }
+        return [...byLine.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row);
+      }
+      const nav = [...document.querySelectorAll<HTMLElement>('a[data-uia^="nav-"], [data-uia="navigation+actions+search+icon"], [data-uia="navigation+profile-menu+trigger"]')].filter(visible);
+      const billboard = [...document.querySelectorAll<HTMLElement>('[data-uia="play-video-button"], [data-uia="billboard-more-info"]')].filter(visible);
+      const carousels = [...document.querySelectorAll<HTMLElement>('[data-uia^="carousel-row-section"]')]
+        .map((row) => [...row.querySelectorAll<HTMLElement>('a[data-uia="standard-card"], a[data-uia="ranked-card"]')])
+        .filter((row) => row.length > 0);
+      return [nav, billboard, ...carousels].filter((row) => row.length > 0);
+    },
+    closeOverlay() {
+      const close = document.querySelector<HTMLElement>('[data-uia="previewModal-closebtn"], [role="dialog"] button[aria-label*="errar" i], [role="dialog"] button[aria-label*="lose" i]');
+      if (!close || !visible(close)) return false;
+      close.click();
+      return true;
+    },
+    pager(item, direction) {
+      const row = item.closest('[data-uia^="carousel-row-section"]');
+      return row?.querySelector<HTMLElement>(`[data-uia="carousel-hawkins-${direction > 0 ? 'right' : 'left'}-button"]`) ?? null;
+    },
+    paused: () => location.pathname.startsWith('/watch'),
+  };
+
+  const adapterFor = (): TvAdapter | null => (/(^|\.)netflix\.com$/.test(location.hostname) ? NETFLIX : null);
+
+  /** La columna que se recuerda al cambiar de fila (posición horizontal, como en Google TV). */
+  let tvColumnX: number | null = null;
+  const tvMark = (el: HTMLElement): void => {
+    marked?.removeAttribute('data-ctv-focus');
+    marked = el;
+    el.setAttribute('data-ctv-focus', 'tv');
+    el.focus({ preventScroll: true });
+    // Sólo se desplaza la página si la fila no se ve entera (desplazamiento suave, centrado).
+    const r = el.getBoundingClientRect();
+    if (r.top < 70 || r.bottom > innerHeight - 20) el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+  };
+  const inViewport = (el: HTMLElement): boolean => {
+    const r = el.getBoundingClientRect();
+    return r.left >= -2 && r.right <= innerWidth + 2;
+  };
+
+  addEventListener('keydown', (event) => {
+    const dir = DIRECTIONS[event.key];
+    const adapter = adapterFor();
+    if (!dir || !adapter || adapter.paused?.() || isEditable(document.activeElement)) return;
+    const rows = adapter.rows();
+    if (rows.length === 0) return;
+    event.preventDefault();
+    event.stopImmediatePropagation(); // el sitio no se entera: la grilla de TV manda
+
+    const current = marked && marked.isConnected ? marked : null;
+    let rowIndex = current ? rows.findIndex((row) => row.includes(current)) : -1;
+    if (rowIndex < 0 || !current) {
+      // Primera flecha: el primer elemento visible de la primera fila de contenido.
+      const start = rows[Math.min(1, rows.length - 1)] ?? [];
+      const first = start.find(inViewport) ?? start[0];
+      if (first) { tvColumnX = null; tvMark(first); }
+      return;
+    }
+    const [dirX, dirY] = dir;
+    const row = rows[rowIndex] ?? [];
+    const col = row.indexOf(current);
+    if (dirY !== 0) {
+      rowIndex += dirY;
+      const target = rows[rowIndex];
+      if (!target) return;
+      const rect = current.getBoundingClientRect();
+      tvColumnX ??= rect.left + rect.width / 2;
+      const columnX = tvColumnX;
+      // En la fila nueva, el elemento visible más cercano a la columna recordada.
+      const candidates = target.filter(inViewport);
+      const pool = candidates.length > 0 ? candidates : target;
+      const best = pool.reduce((a, b) => {
+        const da = Math.abs(a.getBoundingClientRect().left + a.getBoundingClientRect().width / 2 - columnX);
+        const db = Math.abs(b.getBoundingClientRect().left + b.getBoundingClientRect().width / 2 - columnX);
+        return db < da ? b : a;
+      });
+      tvMark(best);
+      return;
+    }
+    tvColumnX = null;
+    const next = row[col + dirX];
+    if (!next) return;
+    if (!inViewport(next)) {
+      // Fuera de la pantalla: la fila pasa de página (como un control de TV) y se elige ese elemento.
+      const pager = adapter.pager?.(current, dirX > 0 ? 1 : -1);
+      if (pager) {
+        pager.click();
+        setTimeout(() => { tvMark(next); }, 420);
+        return;
+      }
+    }
+    tvMark(next);
+  }, { capture: true });
+
+  // El botón Atrás del control: primero cierra lo que el sitio tenga abierto (la ficha de una serie).
+  window.__controlTvBack = (): boolean => adapterFor()?.closeOverlay() ?? false;
 
   addEventListener('keydown', (event) => {
     const dir = DIRECTIONS[event.key];
