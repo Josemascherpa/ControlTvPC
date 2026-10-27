@@ -1,7 +1,10 @@
 import type { Logger, PointerSurface, SettingsStore } from '../domain/ports';
 
-/** Mientras se use el touchpad (y este rato después), las flechas son scroll en vez de navegación. */
-const ACTIVE_MS = 4000;
+/**
+ * Después de usar el touchpad, durante este rato una ráfaga de flechas iguales puede ser el scroll de
+ * dos dedos. Una flecha suelta (el control en modo teclado) cierra el modo mouse al instante.
+ */
+const ACTIVE_MS = 30_000;
 /** Cuánto desplaza cada flecha del scroll de dos dedos (la app manda 3 por paso: 3 × 40 = 1 "clic" de ruedita). */
 const SCROLL_PER_ARROW = 40;
 
@@ -26,6 +29,7 @@ export class PointerService {
     private readonly log: Logger,
   ) {}
 
+  /** Se usó el touchpad hace poco (y no se volvió a las flechas): las ráfagas de flechas son scroll. */
   get inUse(): boolean {
     return Date.now() - this.lastUse < ACTIVE_MS;
   }
@@ -50,9 +54,9 @@ export class PointerService {
     this.run(this.surface.wheel(dy, dx));
   }
 
-  /** Se volvió a navegar con flechas: la flecha se esconde enseguida. */
+  /** Se volvió a navegar con flechas: termina el modo mouse y la flecha se esconde enseguida. */
   hide(): void {
-    if (!this.inUse) return;
+    if (this.lastUse === 0) return;
     this.lastUse = 0;
     this.surface.hide();
   }

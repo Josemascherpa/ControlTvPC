@@ -8,10 +8,7 @@
 //   - Avisos ("Celular conectado") y la barra de volumen, arriba de todo.
 
 (() => {
-  if (window.__controlTv !== undefined || window.top !== window) return;
-
-  const HOME_ORIGIN = 'http://127.0.0.1:8001';
-  const CURSOR_HIDE_MS = 4000;
+  if (window.__controlTv !== undefined) return;
 
   // ---------- Video más liviano en YouTube ----------
   // Las placas de video de esta notebook (Intel HD 4400 y GeForce 840M) decodifican H.264 por
@@ -19,7 +16,10 @@
   // se pierden cuadros (medido: 5–22 % en 1080p60). Si el navegador "dice" que no los soporta,
   // YouTube manda H.264 (lo mismo que la extensión h264ify). YouTube pregunta de tres formas:
   // MediaSource.isTypeSupported, canPlayType y mediaCapabilities.decodingInfo: se responden las tres.
-  if (/(^|\.)youtube\.com$/.test(location.hostname)) {
+  // Corre también en los iframes: los videos de YouTube metidos en otras páginas (StreamFlix, sitios de
+  // películas) son "youtube.com/embed" o "youtube-nocookie.com"; sin esto venían en AV1 (medido: 7 %
+  // de cuadros perdidos, picos de 80 % con dos a la vez).
+  if (/(^|\.)youtube(-nocookie)?\.com$/.test(location.hostname)) {
     const heavyCodec = /vp0?9|vp8|av01/i;
     for (const name of ['MediaSource', 'ManagedMediaSource'] as const) {
       const source = (window as unknown as Partial<Record<typeof name, typeof MediaSource>>)[name];
@@ -43,6 +43,12 @@
       };
     }
   }
+
+  // Todo lo demás (navegación, avisos, volumen) es sólo para la página principal, no para sus iframes.
+  if (window.top !== window) return;
+
+  const HOME_ORIGIN = 'http://127.0.0.1:8001';
+  const CURSOR_HIDE_MS = 4000;
   const EASE = 'cubic-bezier(.2,.8,.2,1)';
 
   const css = `

@@ -77,6 +77,17 @@ y se cuentan los cuadros con una traza (`PipelineReporter`: completos / parciale
   Pluto, Twitch, Prime, Netflix y Disney+ muestran la misma página; `tv.spotify.com` no existe;
   Spotify con identificación de LG muestra la versión para celular ("Abrir aplicación") y YouTube
   Music con la de tele dice "navegador obsoleto". No vale la pena cambiarles la identificación.
+- **Nunca `Runtime.enable`** (ni en la app ni al medir): sitios como FrameX lo detectan como
+  "herramientas de desarrollador" y se van a `about:blank` (página en blanco). Verificado.
+- **Iframes de otro sitio** (reproductores, YouTube metido en otras páginas): corren en procesos
+  aparte. `EdgeConnection` se engancha con `Target.setAutoAttach` (frenados hasta prepararlos) y les
+  pone el bloqueador y el script (que en un iframe sólo fuerza H.264). Verificado: adentro del iframe
+  de YouTube el navegador responde VP9/AV1 = no, H.264 = sí. Antes venían en AV1 por procesador.
+- **Flechas en modo mouse:** la app manda el scroll de dos dedos como 3 flechas iguales en pocos ms;
+  una flecha del control llega sola. En modo mouse se espera 80 ms: ráfaga = scroll, sola = navega y
+  cierra el modo mouse. (Antes cada flecha renovaba el modo mouse y las flechas quedaban "trabadas".)
+- Prueba de uso real (oct. 2026): teclas en el inicio 3–33 ms hasta pantalla; WiFi al celular
+  promedio 91 ms, picos de 548 ms y pérdidas (el WiFi del celular es la parte más lenta del recorrido).
 - Al abrir una app, la orden sale a los 140 ms (antes esperaba los 420 ms de la animación).
 - Navegación con flechas en páginas externas: primero sólo posiciones, el estilo se revisa sólo en los
   mejores candidatos; repeticiones de una flecha mantenida, como mucho una cada 45 ms.

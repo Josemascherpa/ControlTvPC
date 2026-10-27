@@ -38,6 +38,10 @@ export interface CdpCommands {
   'Target.createTarget': { params: { url: string }; result: { targetId: string } };
   'Target.attachToTarget': { params: { targetId: string; flatten: true }; result: { sessionId: string } };
   'Target.closeTarget': { params: { targetId: string }; result: { success: boolean } };
+  /** Engancharse solo a los iframes de otro sitio (y workers) apenas se crean, frenados hasta prepararlos. */
+  'Target.setAutoAttach': { params: { autoAttach: boolean; waitForDebuggerOnStart: boolean; flatten: true }; result: Empty };
+  /** Deja seguir a un iframe que quedó frenado esperando (ver Target.setAutoAttach). */
+  'Runtime.runIfWaitingForDebugger': { params: Empty; result: Empty };
   'Browser.getWindowForTarget': { params: { targetId: string }; result: { windowId: number } };
   'Browser.getWindowBounds': { params: { windowId: number }; result: { bounds: { windowState: WindowState } } };
   'Browser.setWindowBounds': { params: { windowId: number; bounds: { windowState: WindowState } }; result: Empty };
@@ -74,6 +78,7 @@ export interface CdpEvents {
   'Target.targetCreated': { targetInfo: TargetInfo };
   'Target.targetInfoChanged': { targetInfo: TargetInfo };
   'Target.targetDestroyed': { targetId: string };
+  'Target.attachedToTarget': { sessionId: string; targetInfo: TargetInfo; waitingForDebugger: boolean };
   'Fetch.requestPaused': { requestId: string; request: { url: string } };
 }
 

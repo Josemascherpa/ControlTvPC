@@ -234,6 +234,9 @@ export class EdgeConnection {
     });
     client.on('Target.targetCreated', ({ targetInfo }) => { this.onTarget(targetInfo); });
     client.on('Target.targetInfoChanged', ({ targetInfo }) => { this.onTarget(targetInfo); });
+    client.on('Target.attachedToTarget', ({ sessionId, targetInfo, waitingForDebugger }) => {
+      void this.prepareFrame(client, sessionId, targetInfo, waitingForDebugger);
+    });
     client.on('Target.targetDestroyed', ({ targetId }) => {
       if (targetId === this.targetId) this.sessionId = null;
     });
@@ -293,7 +296,30 @@ export class EdgeConnection {
     // inject.js corre en cada página que se abra: navegación con flechas, avisos y volumen.
     await this.page('Page.addScriptToEvaluateOnNewDocument', { source: this.inject });
     await this.page('Runtime.evaluate', { expression: this.inject }).catch(() => undefined);
+    // Los iframes de otro sitio (reproductores, videos de YouTube metidos en otras páginas, anuncios)
+    // corren en procesos aparte: se los engancha apenas se crean (ver prepareFrame).
+    await this.page('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
     this.attached.emit();
+  }
+
+  /**
+   * Un iframe de otro sitio recién creado (frenado hasta acá): le llegan el bloqueador de anuncios y
+   * el script (que adentro de un iframe sólo hace que YouTube mande H.264, decodificado por la placa
+   * de video). Nunca "Runtime.enable": hay sitios que lo detectan y se van a una página en blanco.
+   */
+  private async prepareFrame(client: CdpClient, sessionId: string, info: TargetInfo, waiting: boolean): Promise<void> {
+    try {
+      if (info.type === 'iframe') {
+        await client.send('Page.enable', {}, sessionId);
+        await client.send('Fetch.enable', { patterns: AD_BLOCK_PATTERNS }, sessionId);
+        await client.send('Page.addScriptToEvaluateOnNewDocument', { source: this.inject }, sessionId);
+        await client.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId);
+      }
+    } catch {
+      // un iframe que se cerró enseguida (anuncios): no importa
+    } finally {
+      if (waiting) await client.send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => undefined);
+    }
   }
 
   private onTarget(info: TargetInfo): void {
