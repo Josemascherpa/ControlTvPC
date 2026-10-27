@@ -322,8 +322,8 @@ function renderHome(): void {
   const recent = recentProgress();
   if (recent.length) appendRow('Continuar viendo', recent.map((entry) => makeCard(entryTitle(entry), entry)));
   for (const row of catalogRows) appendRow(row.name, row.items.map((item) => makeCard(item)));
-  const count = catalogRows.reduce((total, row) => total + row.items.length, 0);
-  setStatus(count ? `${count} títulos · Catálogo FrameX · La reproducción depende del servidor elegido.` : 'No hay títulos para mostrar.');
+  const uniqueCount = new Set(catalogRows.flatMap((row) => row.items).map((item) => `${item.type}:${item.id}`)).size;
+  setStatus(uniqueCount ? `${uniqueCount} títulos · Catálogo FrameX · La reproducción depende del servidor elegido.` : 'No hay títulos para mostrar.');
   window.scrollTo(0, 0);
   rebuildNav();
   focusInitial();
@@ -876,6 +876,8 @@ async function tryNextServer(token: number): Promise<void> {
   if (token !== playToken || player.hidden || !playerContext) return;
   if (performance.now() - lastFallbackAt < 1200) return;
   lastFallbackAt = performance.now();
+  // Si el servidor falló a mitad de la película, el siguiente retoma en el mismo minuto.
+  if (Number.isFinite(video.currentTime) && video.currentTime > 5) resumeAt = video.currentTime;
   releaseVideo();
   if (triedProviders.length >= 5) {
     playerStatus.textContent = 'Ningún servidor de este título entregó una fuente compatible.';
