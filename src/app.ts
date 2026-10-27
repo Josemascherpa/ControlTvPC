@@ -3,7 +3,8 @@
 // la app Android). Todo lo demás depende sólo de interfaces (la "D" de SOLID).
 
 import { join } from 'path';
-import { HOME_URL, PATHS, PORTS } from './config/paths';
+import { HOME_URL, PATHS, PORTS, ROOT } from './config/paths';
+import { FramexLibrary } from './infrastructure/media/framex-library';
 import { PhoneAccess } from './application/phone-access';
 import { IdlePowerService } from './application/idle-power-service';
 import { PhoneSessions } from './application/phone-sessions';
@@ -42,6 +43,7 @@ async function main(): Promise<void> {
   const log = new FileLogger(PATHS.logs);
   const settings = new SettingsFile(PATHS.settings);
   const apps = new AppCatalogFile(PATHS.customApps, PATHS.appsExample);
+  const library = new FramexLibrary();
   const network = new OsNetwork();
   const display = new WindowsDisplay();
   const inputHost = new InputHost(PATHS.nativeScripts, log);
@@ -96,6 +98,9 @@ async function main(): Promise<void> {
   const server = new TvServer({
     port: PORTS.server,
     uiDir: PATHS.ui,
+    library: (params) => library.query(params),
+    subtitle: (url) => library.subtitle(url),
+    hlsScript: join(ROOT, 'node_modules', 'hls.js', 'dist', 'hls.min.js'),
     backgroundsDir: PATHS.backgrounds,
     deviceName: () => settings.get('name'),
     localAddress: () => network.localAddress(),

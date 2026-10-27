@@ -22,7 +22,7 @@ export function toTvUrl(url: string): string {
 
 /**
  * El "sitio" de una dirección: el dominio registrado, sin subdominios
- * (www.netflix.com → netflix.com; player.streamflix.com.ar → streamflix.com.ar).
+ * (www.youtube.com → youtube.com; player.ejemplo.com.ar → ejemplo.com.ar).
  */
 export function siteOf(url: string): string {
   let host: string;
@@ -43,7 +43,7 @@ export function sameSite(a: string, b: string): boolean {
   return site !== '' && site === siteOf(b);
 }
 
-/** true si la dirección es de ese dominio o de un subdominio (www.netflix.com → netflix.com). */
+/** true si la dirección es de ese dominio o de un subdominio (www.youtube.com → youtube.com). */
 export function belongsTo(url: string, domain: string): boolean {
   if (!domain) return false;
   try {

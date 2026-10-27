@@ -92,11 +92,15 @@ export class EdgeScreen implements TvScreen {
       returnByValue: true,
     });
     if (result.value === true) return undefined;
+    if (result.value === 'escape') return this.pressKey('ESCAPE');
     if (this.current?.back === 'escape') return this.pressKey('ESCAPE');
 
     const { currentIndex, entries } = await this.edge.page('Page.getNavigationHistory', {});
     const previous = entries[currentIndex - 1];
     if (previous && !previous.url.startsWith(this.homeUrl) && !previous.url.startsWith('about:')) {
+      const app = this.apps.forUrl(previous.url);
+      const userAgent = app && previous.url.startsWith(app.url.split('#')[0] ?? app.url) ? app.userAgent : null;
+      await this.setUserAgent(userAgent);
       await this.edge.page('Page.navigateToHistoryEntry', { entryId: previous.id });
       return undefined;
     }
@@ -116,11 +120,24 @@ export class EdgeScreen implements TvScreen {
 
   async insertText(text: string): Promise<void> {
     await this.edge.ensure();
+    const { result } = await this.edge.page('Runtime.evaluate', {
+      expression: 'window.__controlTvPrepareText ? window.__controlTvPrepareText() : true',
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (result.value !== true) return;
     await this.edge.page('Input.insertText', { text });
   }
 
   closeToDesktop(): Promise<void> {
     return this.edge.closeWindow();
+  }
+
+  async togglePlayback(): Promise<boolean> {
+    const { result } = await this.edge.page('Runtime.evaluate', {
+      expression: 'window.__controlTvTogglePlayback?.() === true', returnByValue: true,
+    });
+    return result.value === true;
   }
 
   restart(): Promise<void> {
@@ -138,16 +155,16 @@ export class EdgeScreen implements TvScreen {
   /**
    * El "disfraz" de Smart TV (YouTube) o ninguno. Para volver a lo normal se QUITA el disfraz (texto
    * vacío): si en cambio se pone el texto normal, Edge deja de mandar sus datos de identificación
-   * (marca, plataforma, versiones) y los sitios ven un dispositivo distinto. Medido: Netflix cerraba
-   * la sesión por eso cada vez que se volvía a entrar.
+   * (marca, plataforma, versiones) y los sitios ven un dispositivo distinto (medido: un sitio de
+   * streaming cerraba la sesión por eso cada vez que se volvía a entrar).
    */
   private async setUserAgent(userAgent: string | null): Promise<void> {
-    await this.edge.page('Network.setUserAgentOverride', { userAgent: userAgent ?? '' }).catch(() => undefined);
+    await this.edge.page('Network.setUserAgentOverride', { userAgent: userAgent ?? '' });
   }
 
   // Si la persona navega con el cursor a otra página, actualizamos en qué app estamos.
   private syncApp(url: string): void {
-    if (url.startsWith(this.homeUrl)) this.current = null;
+    if (url === this.homeUrl || url.startsWith(`${this.homeUrl}?`) || url.startsWith(`${this.homeUrl}#`)) this.current = null;
     else if (!url.startsWith('about:')) this.current = this.apps.forUrl(url) ?? WEB_APP;
   }
 }

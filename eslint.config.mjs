@@ -3,7 +3,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'ui/js/**', 'runtime/**', 'node_modules/**', 'eslint.config.mjs'] },
+  { ignores: ['dist/**', 'ui/js/**', 'runtime/**', 'node_modules/**', 'eslint.config.mjs', 'work/**', 'tests/**/*.cjs'] },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {

@@ -8,7 +8,8 @@ export class EdgeMedia {
     if (!this.edge.isReady) return false; // Edge cerrado: no hay nada reproduciéndose en la tele
     try {
       const { result } = await this.edge.page('Runtime.evaluate', {
-        expression: "[...document.querySelectorAll('video, audio')].some((m) => !m.paused && !m.ended && m.readyState > 2)"
+        // Buffering también cuenta: bajar la CPU mientras carga agrava el problema.
+        expression: "[...document.querySelectorAll('video, audio')].some((m) => !m.paused && !m.ended)"
           + " || (navigator.mediaSession && navigator.mediaSession.playbackState === 'playing')",
         returnByValue: true,
       });

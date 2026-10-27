@@ -5,16 +5,19 @@
   "description": "ControlTv PC: convierte la notebook en una Smart TV manejada desde el celular",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p web/tsconfig.json && npm run build:native",
+    "build": "npm run build:typescript && npm run build:native",
+    "build:typescript": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
     "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -File native/build-native.ps1",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "lint": "eslint .",
     "check": "npm run typecheck && npm run lint",
+    "test": "npm run build:typescript && node --test tests/*.test.cjs",
     "start": "node dist/main.js"
   },
   "dependencies": {
+    "hls.js": "1.7.3",
     "koffi": "2.9.0",
-    "ws": "8.18.0"
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.14.0",

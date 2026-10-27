@@ -40,11 +40,21 @@ export class InputHost implements LineChannel {
   private readonly waiting: Waiting[] = [];
   /** Movimiento del puntero acumulado mientras el canal está lleno (se suman, no se encolan). */
   private pendingMove: { dx: number; dy: number } | null = null;
+  private waitingForDrain = false;
 
   constructor(private readonly scriptsDir: string, private readonly log: Logger) {}
 
   send(command: string): void {
-    this.ensure().stdin.write(`${command}\n`);
+    const helper = this.ensure();
+    // Un clic/hide/rueda nunca debe adelantarse a movimientos acumulados por contrapresión.
+    this.flushMove(helper);
+    helper.stdin.write(`${command}\n`);
+  }
+
+  private flushMove(helper: Helper): void {
+    const move = this.pendingMove;
+    this.pendingMove = null;
+    if (move) helper.stdin.write(`move ${move.dx.toFixed(2)} ${move.dy.toFixed(2)}\n`);
   }
 
   /**
@@ -60,7 +70,11 @@ export class InputHost implements LineChannel {
     }
     if (helper.stdin.writableNeedDrain) {
       this.pendingMove = { dx, dy };
+      if (this.waitingForDrain) return;
+      this.waitingForDrain = true;
       helper.stdin.once('drain', () => {
+        if (this.process !== helper) return;
+        this.waitingForDrain = false;
         const move = this.pendingMove;
         this.pendingMove = null;
         if (move) this.move(move.dx, move.dy);
@@ -80,6 +94,9 @@ export class InputHost implements LineChannel {
         if (entry.done) return;
         entry.done = true;
         resolve(null);
+        // Sin IDs, una respuesta perdida deja desalineadas TODAS las siguientes.
+        // Reiniciar el canal descarta también las entradas vencidas y acota su memoria.
+        if (this.process === helper) helper.kill();
       }, REQUEST_TIMEOUT_MS).unref();
       helper.stdin.write(`${command}\n`);
     });
@@ -119,13 +136,19 @@ export class InputHost implements LineChannel {
         entry.resolve(line);
       }
     });
-    child.on('exit', () => {
+    const disconnected = (): void => {
       if (this.process !== child) return;
       this.process = null;
-      for (const entry of this.waiting.splice(0)) if (!entry.done) entry.resolve(null);
+      for (const entry of this.waiting.splice(0)) {
+        if (!entry.done) entry.resolve(null);
+        entry.done = true;
+      }
       this.pendingMove = null;
+      this.waitingForDrain = false;
       this.log.warn('El ayudante nativo se cerró; se reabre en el próximo uso');
-    });
+    };
+    child.on('exit', disconnected);
+    child.on('error', disconnected);
     child.stdin.on('error', () => {
       // si se cerró justo mientras escribíamos, el "exit" ya lo maneja
     });

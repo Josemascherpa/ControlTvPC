@@ -4,6 +4,8 @@ import type { AppCatalog } from '../../domain/ports';
 import { belongsTo } from '../../domain/urls';
 import { asArray, asString, isRecord, readJsonFile } from './json';
 
+const LIBRARY_APP = app('cinema', 'Cine ControlTV', 'movies', 'http://127.0.0.1:8001/cinema.html', '127.0.0.1', '#77e8ce', '#101820');
+
 /** YouTube muestra su versión para TV (manejable con flechas) sólo si cree que es una Smart TV. */
 const TV_USER_AGENT =
   'Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36 (KHTML, like Gecko) 85.0.4183.93/6.5 TV Safari/537.36';
@@ -11,31 +13,20 @@ const TV_USER_AGENT =
 const CATEGORIES: readonly AppCategory[] = ['platforms', 'movies', 'live', 'music', 'video', 'web'];
 
 const DEFAULT_APPS: readonly TvApp[] = [
-  // Plataformas
-  app('netflix', 'Netflix', 'platforms', 'https://www.netflix.com/browse', 'netflix.com', '#e50914', '#000000'),
-  app('disney', 'Disney+', 'platforms', 'https://www.disneyplus.com', 'disneyplus.com', '#113ccf', '#040714'),
-  app('prime', 'Prime Video', 'platforms', 'https://www.primevideo.com', 'primevideo.com', '#1a98ff', '#0f171e'),
-  app('max', 'HBO Max', 'platforms', 'https://play.hbomax.com', 'hbomax.com', '#ffffff', '#000a2e'),
-  app('paramount', 'Paramount+', 'platforms', 'https://www.paramountplus.com', 'paramountplus.com', '#0064ff', '#000a1f'),
-  // Películas y series online
-  app('framex', 'FrameX TV', 'movies', 'https://framextv.cc', 'framextv.cc', '#ffffff', '#09090b'),
-  app('cinehax', 'Cinehax', 'movies', 'https://cinehax.com', 'cinehax.com', '#ffffff', '#11131a'),
-  app('cinemaos', 'CinemaOS', 'movies', 'https://cinemaos.live', 'cinemaos.live', '#ffffff', '#16161d'),
-  // TV en vivo
-  app('streamflix', 'StreamFlix', 'live', 'https://streamflix.com.ar', 'streamflix.com.ar', '#ff0000', '#000000'),
-  app('pluto', 'Pluto TV', 'live', 'https://pluto.tv/latam/live-tv', 'pluto.tv', '#fff200', '#000000'),
+  LIBRARY_APP,
   // Música
   app('spotify', 'Spotify', 'music', 'https://open.spotify.com', 'spotify.com', '#1ed760', '#121212'),
-  app('ytmusic', 'YouTube Music', 'music', 'https://music.youtube.com', 'music.youtube.com', '#ff0033', '#0f0f0f'),
   // Videos
   app('youtube', 'YouTube', 'video', 'https://www.youtube.com/tv', 'youtube.com', '#ff0033', '#141414', 'escape', TV_USER_AGENT),
   app('twitch', 'Twitch', 'video', 'https://www.twitch.tv', 'twitch.tv', '#9146ff', '#18181b'),
+  app('kick', 'Kick', 'video', 'https://kick.com', 'kick.com', '#53fc18', '#101411'),
   // Internet
   app('google', 'Internet', 'web', 'https://www.google.com', 'google.com', '#4285f4', '#1a1c24'),
 ];
 
 /** Las que aparecen en el inicio hasta que la persona elija las suyas. */
-const DEFAULT_HOME: readonly string[] = ['netflix', 'disney', 'prime', 'max', 'framex', 'cinehax', 'cinemaos', 'streamflix', 'pluto', 'spotify', 'ytmusic', 'youtube'];
+const DEFAULT_HOME: readonly string[] = ['cinema', 'youtube', 'spotify', 'twitch', 'kick'];
+const RETIRED = new Set(['netflix', 'disney', 'prime', 'max', 'paramount', 'framex', 'cinehax', 'cinemaos', 'streamflix', 'pluto', 'ytmusic']);
 
 function app(
   id: string, name: string, category: AppCategory, url: string, domain: string, color: string, background: string,
@@ -93,6 +84,8 @@ export class AppCatalogFile implements AppCatalog {
         userAgent: typeof raw['userAgent'] === 'string' ? raw['userAgent'] : null,
       };
     }).filter((a): a is TvApp => a !== null);
-    this.apps = custom.length > 0 ? custom : DEFAULT_APPS;
+    const active = custom.filter((item) => !RETIRED.has(item.id) && item.category !== 'platforms');
+    this.apps = [LIBRARY_APP, ...active.filter((item) => item.id !== LIBRARY_APP.id),
+      ...DEFAULT_APPS.filter((item) => item.id !== LIBRARY_APP.id && !active.some((existing) => existing.id === item.id))];
   }
 }

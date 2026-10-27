@@ -224,7 +224,11 @@ export class EdgeConnection {
     this.defaultUserAgent = version.userAgent.replace('HeadlessChrome', 'Chrome');
 
     const client = await CdpClient.connect(version.webSocketDebuggerUrl);
+    const previousClient = this.client;
     this.client = client;
+    // Una pestaña destruida puede dejar vivo el socket anterior. No acumular conexiones
+    // y sus listeners cada vez que se recupera la sesión.
+    previousClient?.close();
     client.onClose(() => {
       if (this.client !== client) return;
       this.client = null;
@@ -248,10 +252,13 @@ export class EdgeConnection {
 
     const { targetInfos } = await client.send('Target.getTargets', {});
     const pages = targetInfos.filter((t) => t.type === 'page');
-    const page = pages.find((t) => t.url.startsWith(this.options.homeUrl)) ?? pages[0];
+    const page = pages.find((t) => t.targetId === this.targetId)
+      ?? pages.find((t) => t.url.startsWith(this.options.homeUrl)) ?? pages[0];
     const targetId = page?.targetId ?? (await client.send('Target.createTarget', { url: this.options.homeUrl })).targetId;
     await this.attach(targetId);
-    if (!page?.url.startsWith(this.options.homeUrl)) await this.page('Page.navigate', { url: this.options.homeUrl });
+    // Reconectar el control no debe interrumpir la película ni el inicio de sesión.
+    // Una pestaña nueva ya se crea con homeUrl; una existente conserva su documento.
+    this.urlChanged.emit(page?.url ?? this.options.homeUrl);
     const { processInfo } = await client.send('SystemInfo.getProcessInfo', {});
     const browser = processInfo.find((p) => p.type === 'browser');
     if (browser) this.browserProcess.emit(browser.id);

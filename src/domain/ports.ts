@@ -21,6 +21,8 @@ export interface TvScreen {
   back(): Promise<void>;
   pressKey(key: PageKey): Promise<void>;
   insertText(text: string): Promise<void>;
+  /** Reproducción directa en las pantallas propias, antes del fallback multimedia de Windows. */
+  togglePlayback?(): Promise<boolean>;
   /** Cierra la tele y deja el escritorio de Windows. */
   closeToDesktop(): Promise<void>;
   /** Cierra y vuelve a abrir el navegador (ej. para cambiar de placa de video). */

@@ -33,6 +33,8 @@ export type MouseEventParams =
   | { readonly type: 'mouseWheel'; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number };
 
 export interface CdpCommands {
+  'Media.enable': { params: Empty; result: Empty };
+  'Media.disable': { params: Empty; result: Empty };
   'Target.setDiscoverTargets': { params: { discover: boolean }; result: Empty };
   'Target.getTargets': { params: Empty; result: { targetInfos: readonly TargetInfo[] } };
   'Target.createTarget': { params: { url: string }; result: { targetId: string } };
@@ -63,7 +65,7 @@ export interface CdpCommands {
   'Page.getLayoutMetrics': { params: Empty; result: { cssLayoutViewport: { clientWidth: number; clientHeight: number } } };
   'Page.captureScreenshot': { params: { format: 'jpeg' | 'png'; quality?: number }; result: { data: string } };
   'Runtime.evaluate': {
-    params: { expression: string; returnByValue?: boolean };
+    params: { expression: string; returnByValue?: boolean; awaitPromise?: boolean };
     result: { result: { type: string; value?: unknown } };
   };
   'Network.setUserAgentOverride': { params: { userAgent: string }; result: Empty };
@@ -75,6 +77,7 @@ export interface CdpCommands {
 }
 
 export interface CdpEvents {
+  'Media.playerPropertiesChanged': { playerId: string; properties: readonly { name: string; value: string }[] };
   'Target.targetCreated': { targetInfo: TargetInfo };
   'Target.targetInfoChanged': { targetInfo: TargetInfo };
   'Target.targetDestroyed': { targetId: string };

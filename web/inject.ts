@@ -1,4 +1,4 @@
-// Se ejecuta adentro de CADA página que abre la tele (inicio, YouTube, Netflix…). Es un script
+// Se ejecuta adentro de CADA página que abre la tele (inicio, YouTube, Spotify…). Es un script
 // (no un módulo) porque se inyecta con DevTools: todo va adentro de una función para no ensuciar
 // la página. Sólo usa createElement/textContent (nada de innerHTML): YouTube y otras lo bloquean.
 //
@@ -16,9 +16,9 @@
   // se pierden cuadros (medido: 5–22 % en 1080p60). Si el navegador "dice" que no los soporta,
   // YouTube manda H.264 (lo mismo que la extensión h264ify). YouTube pregunta de tres formas:
   // MediaSource.isTypeSupported, canPlayType y mediaCapabilities.decodingInfo: se responden las tres.
-  // Corre también en los iframes: los videos de YouTube metidos en otras páginas (StreamFlix, sitios de
-  // películas) son "youtube.com/embed" o "youtube-nocookie.com"; sin esto venían en AV1 (medido: 7 %
-  // de cuadros perdidos, picos de 80 % con dos a la vez).
+  // Corre también en los iframes: los videos de YouTube metidos en otras páginas son
+  // "youtube.com/embed" o "youtube-nocookie.com"; sin esto venían en AV1 (medido: 7 % de cuadros
+  // perdidos, picos de 80 % con dos a la vez).
   if (/(^|\.)youtube(-nocookie)?\.com$/.test(location.hostname)) {
     const heavyCodec = /vp0?9|vp8|av01/i;
     for (const name of ['MediaSource', 'ManagedMediaSource'] as const) {
@@ -55,8 +55,7 @@
     html, html * { cursor: none !important; }
     [data-ctv-focus] { outline: .5vh solid #2f80ff !important; outline-offset: .3vh !important;
       box-shadow: 0 0 0 1.1vh rgba(47,128,255,.28) !important; border-radius: .6vh;
-      animation: ctv-focus-in .22s ${EASE}; }
-    @keyframes ctv-focus-in { from { outline-offset: 1.2vh; box-shadow: 0 0 0 0 rgba(47,128,255,0); } }
+      }
     #ctv-layer { position: fixed; inset: 0; pointer-events: none; z-index: 2147483647; font-family: 'Segoe UI', system-ui, sans-serif; }
     #ctv-layer .ctv-toast { position: absolute; right: 2.2vw; bottom: 3vh; display: flex; align-items: center; gap: 1vw;
       padding: 1.6vh 2vw; border-radius: 999px; background: rgba(18,18,24,.92); color: #fff; font-size: 2.6vh; font-weight: 600;
@@ -145,24 +144,51 @@
   const nearRect = (el: Element): DOMRect | null => {
     const r = el.getBoundingClientRect();
     if (r.width < 4 || r.height < 4) return null;
-    if (r.bottom < -innerHeight || r.top > innerHeight * 2 || r.right < 0 || r.left > innerWidth) return null;
+    if (r.bottom < -innerHeight || r.top > innerHeight * 2 || r.right < -innerWidth || r.left > innerWidth * 2) return null;
     return r;
   };
   /** Revisar el estilo es lo caro: se hace sólo con los pocos mejores candidatos, no con todos. */
   const isShown = (el: Element): boolean => {
     const style = getComputedStyle(el);
-    return style.visibility !== 'hidden' && style.opacity !== '0' && !el.closest('[aria-hidden=true], [inert]');
+    return style.visibility !== 'hidden' && style.opacity !== '0' && !el.closest('[aria-hidden=true], [inert], [aria-disabled=true]')
+      && !el.matches(':disabled');
+  };
+  // Cacheamos pertenencia, nunca geometría: scroll, zoom y animaciones cambian las posiciones.
+  // Las páginas SPA invalidan la lista con sus mutaciones; el resaltado propio no la invalida.
+  let focusables: readonly HTMLElement[] | null = null;
+  let overlays: readonly HTMLElement[] | null = null;
+  const focusObserver = new MutationObserver((records) => {
+    if (!records.some((r) => r.type === 'attributes'
+      || [...r.addedNodes, ...r.removedNodes].some((node) => node instanceof Element))) return;
+    focusables = null;
+    overlays = null;
+  });
+  withRoot((root) => {
+    focusObserver.observe(root, {
+      subtree: true, childList: true, attributes: true,
+      attributeFilter: ['tabindex', 'href', 'role', 'disabled', 'type', 'contenteditable', 'aria-modal', 'open'],
+    });
+  });
+  const candidatesFor = (root: Document | HTMLElement): readonly HTMLElement[] => {
+    if (root !== document) return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    focusables ??= [...document.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    return focusables;
   };
   // Una flecha mantenida apretada repite muy rápido: no se procesa más de una por cuadro de pantalla.
   const REPEAT_GAP_MS = 45;
   let lastMove = 0;
 
   let marked: HTMLElement | null = null;
+  const focusElement = (el: HTMLElement): void => {
+    // role=button no vuelve enfocable a un div. Darle foco real permite escribir/activar después.
+    if (el.tabIndex < 0 && !el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+    el.focus({ preventScroll: true });
+  };
   const mark = (el: HTMLElement): void => {
     marked?.removeAttribute('data-ctv-focus');
     marked = el;
     el.setAttribute('data-ctv-focus', '');
-    el.focus({ preventScroll: true });
+    focusElement(el);
     el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
   };
   addEventListener('mousedown', () => {
@@ -170,153 +196,69 @@
     marked = null;
   }, { capture: true, passive: true });
 
-  // ---------- Modo TV por sitio (como las apps de un Chromecast) ----------
-  // Para los sitios grandes de streaming, en vez de "el botón más cercano", una grilla de TV: filas
-  // (arriba/abajo, recordando la columna) y elementos dentro de la fila (izquierda/derecha); al llegar
-  // al borde, la fila pasa de página sola. Cada sitio dice cuáles son sus filas (un "adaptador").
-  interface TvAdapter {
-    /** Las filas navegables, de arriba hacia abajo (cada una, sus elementos de izquierda a derecha). */
-    rows(): readonly (readonly HTMLElement[])[];
-    /** Si hay algo abierto encima (una ficha), lo cierra y devuelve true. Lo usa el botón Atrás. */
-    closeOverlay(): boolean;
-    /** El botón de la fila que pasa a la página siguiente/anterior, si tiene. */
-    pager?(item: HTMLElement, direction: 1 | -1): HTMLElement | null;
-    /** No intervenir (ej. mientras se mira un video, el sitio maneja sus teclas). */
-    paused?(): boolean;
-  }
-
   const visible = (el: HTMLElement): boolean => {
     const r = el.getBoundingClientRect();
-    return r.width > 4 && r.height > 4;
+    return r.width > 4 && r.height > 4 && isShown(el);
   };
 
-  const NETFLIX: TvAdapter = {
-    rows() {
-      const modal = document.querySelector<HTMLElement>('[role="dialog"], [data-uia*="previewModal"]');
-      if (modal && visible(modal)) {
-        // Con una ficha abierta: sus botones y sus episodios/similares, agrupados por altura.
-        const items = [...modal.querySelectorAll<HTMLElement>('button, a[href], [tabindex="0"]')].filter(visible);
-        const byLine = new Map<number, HTMLElement[]>();
-        for (const item of items) {
-          const line = Math.round(item.getBoundingClientRect().top / 40);
-          byLine.set(line, [...(byLine.get(line) ?? []), item]);
-        }
-        return [...byLine.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row);
-      }
-      const nav = [...document.querySelectorAll<HTMLElement>('a[data-uia^="nav-"], [data-uia="navigation+actions+search+icon"], [data-uia="navigation+profile-menu+trigger"]')].filter(visible);
-      const billboard = [...document.querySelectorAll<HTMLElement>('[data-uia="play-video-button"], [data-uia="billboard-more-info"]')].filter(visible);
-      const carousels = [...document.querySelectorAll<HTMLElement>('[data-uia^="carousel-row-section"]')]
-        .map((row) => [...row.querySelectorAll<HTMLElement>('a[data-uia="standard-card"], a[data-uia="ranked-card"]')])
-        .filter((row) => row.length > 0);
-      return [nav, billboard, ...carousels].filter((row) => row.length > 0);
-    },
-    closeOverlay() {
-      const close = document.querySelector<HTMLElement>('[data-uia="previewModal-closebtn"], [role="dialog"] button[aria-label*="errar" i], [role="dialog"] button[aria-label*="lose" i]');
-      if (!close || !visible(close)) return false;
-      close.click();
-      return true;
-    },
-    pager(item, direction) {
-      const row = item.closest('[data-uia^="carousel-row-section"]');
-      return row?.querySelector<HTMLElement>(`[data-uia="carousel-hawkins-${direction > 0 ? 'right' : 'left'}-button"]`) ?? null;
-    },
-    paused: () => location.pathname.startsWith('/watch'),
-  };
-
-  const adapterFor = (): TvAdapter | null => (/(^|\.)netflix\.com$/.test(location.hostname) ? NETFLIX : null);
-
-  /** La columna que se recuerda al cambiar de fila (posición horizontal, como en Google TV). */
-  let tvColumnX: number | null = null;
-  const tvMark = (el: HTMLElement): void => {
-    marked?.removeAttribute('data-ctv-focus');
-    marked = el;
-    el.setAttribute('data-ctv-focus', 'tv');
-    el.focus({ preventScroll: true });
-    // Sólo se desplaza la página si la fila no se ve entera (desplazamiento suave, centrado).
-    const r = el.getBoundingClientRect();
-    if (r.top < 70 || r.bottom > innerHeight - 20) el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-  };
-  const inViewport = (el: HTMLElement): boolean => {
-    const r = el.getBoundingClientRect();
-    return r.left >= -2 && r.right <= innerWidth + 2;
-  };
-
-  addEventListener('keydown', (event) => {
-    const dir = DIRECTIONS[event.key];
-    const adapter = adapterFor();
-    if (!dir || !adapter || adapter.paused?.() || isEditable(document.activeElement)) return;
-    const rows = adapter.rows();
-    if (rows.length === 0) return;
-    event.preventDefault();
-    event.stopImmediatePropagation(); // el sitio no se entera: la grilla de TV manda
-
-    const current = marked && marked.isConnected ? marked : null;
-    let rowIndex = current ? rows.findIndex((row) => row.includes(current)) : -1;
-    if (rowIndex < 0 || !current) {
-      // Primera flecha: el primer elemento visible de la primera fila de contenido.
-      const start = rows[Math.min(1, rows.length - 1)] ?? [];
-      const first = start.find(inViewport) ?? start[0];
-      if (first) { tvColumnX = null; tvMark(first); }
-      return;
+  const OVERLAYS = '[role=dialog], dialog[open], [aria-modal=true], [role=menu], [role=listbox]';
+  const activeOverlay = (): HTMLElement | null => {
+    const active = document.activeElement?.closest<HTMLElement>(OVERLAYS);
+    if (active && visible(active)) return active;
+    // Los paneles anidados suelen agregarse al final. El último visible conserva el foco.
+    overlays ??= [...document.querySelectorAll<HTMLElement>(OVERLAYS)];
+    for (let i = overlays.length - 1; i >= 0; i--) {
+      const panel = overlays[i];
+      if (panel && visible(panel)) return panel;
     }
-    const [dirX, dirY] = dir;
-    const row = rows[rowIndex] ?? [];
-    const col = row.indexOf(current);
-    if (dirY !== 0) {
-      rowIndex += dirY;
-      const target = rows[rowIndex];
-      if (!target) return;
-      const rect = current.getBoundingClientRect();
-      tvColumnX ??= rect.left + rect.width / 2;
-      const columnX = tvColumnX;
-      // En la fila nueva, el elemento visible más cercano a la columna recordada.
-      const candidates = target.filter(inViewport);
-      const pool = candidates.length > 0 ? candidates : target;
-      const best = pool.reduce((a, b) => {
-        const da = Math.abs(a.getBoundingClientRect().left + a.getBoundingClientRect().width / 2 - columnX);
-        const db = Math.abs(b.getBoundingClientRect().left + b.getBoundingClientRect().width / 2 - columnX);
-        return db < da ? b : a;
-      });
-      tvMark(best);
-      return;
-    }
-    tvColumnX = null;
-    const next = row[col + dirX];
-    if (!next) return;
-    if (!inViewport(next)) {
-      // Fuera de la pantalla: la fila pasa de página (como un control de TV) y se elige ese elemento.
-      const pager = adapter.pager?.(current, dirX > 0 ? 1 : -1);
-      if (pager) {
-        pager.click();
-        setTimeout(() => { tvMark(next); }, 420);
-        return;
-      }
-    }
-    tvMark(next);
-  }, { capture: true });
+    return null;
+  };
 
-  // El botón Atrás del control: primero cierra lo que el sitio tenga abierto (la ficha de una serie).
-  window.__controlTvBack = (): boolean => adapterFor()?.closeOverlay() ?? false;
+  // Texto del celular: nunca elegir un campo de contraseña/email por adivinación.
+  // Mantener el campo que el usuario enfocó, o elegir un único buscador inequívoco.
+  window.__controlTvPrepareText = (): boolean | Promise<boolean> => {
+    // El foco del usuario puede estar dentro de un iframe de otro origen.
+    // Input.insertText ya se dirige al frame enfocado; no robarlo para otro buscador.
+    if (document.activeElement instanceof HTMLIFrameElement) return true;
+    const writable = (el: Element | null): el is HTMLElement => el instanceof HTMLElement
+      && (el.isContentEditable || el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement
+        && /^(text|search|email|password|url|tel|number)$/.test(el.type)))
+      && !el.matches(':disabled, [readonly]') && visible(el);
+    if (writable(document.activeElement)) return true;
+    const scope = activeOverlay() ?? document;
+    const searches = [...scope.querySelectorAll<HTMLElement>('input[type=search], [role=searchbox], [role=search] input')]
+      .filter(writable);
+    if (searches.length === 1 && searches[0]) {
+      focusElement(searches[0]);
+      return document.activeElement === searches[0];
+    }
+    toast({ text: 'Seleccioná el buscador o campo de texto antes de escribir', icon: '⌨' });
+    return false;
+  };
 
   addEventListener('keydown', (event) => {
     const dir = DIRECTIONS[event.key];
     if (!dir || event.defaultPrevented || location.origin === HOME_ORIGIN) return;
-    const [dirX, dirY] = dir;
-    const active = document.activeElement;
-    // Adentro de un campo de texto, izquierda/derecha mueven el cursor del texto.
-    if (isEditable(active) && dirX !== 0) return;
-
     if (event.repeat && performance.now() - lastMove < REPEAT_GAP_MS) {
       event.preventDefault();
       return;
     }
+    const active = document.activeElement;
+    // Adentro de un campo de texto, izquierda/derecha mueven el cursor del texto.
+    if (isEditable(active)) return;
+    const dialog = activeOverlay();
+    const fullscreen = document.fullscreenElement;
+    if (!dialog && (active instanceof HTMLVideoElement || fullscreen instanceof HTMLVideoElement || fullscreen?.querySelector('video'))) return;
+    if (!dialog && /^(www\.)?youtube\.com$/.test(location.hostname)
+      && (location.pathname.startsWith('/tv') || location.pathname.startsWith('/watch'))) return;
 
     // Primero sólo se leen posiciones (barato y todas juntas, sin cambiar nada en el medio).
-    const from = active && active !== document.body ? nearRect(active) : null;
+    const from = active && active !== document.body && (!dialog || dialog.contains(active)) ? nearRect(active) : null;
+    const [dirX, dirY] = dir;
     const ox = from ? from.left + from.width / 2 : innerWidth / 2;
     const oy = from ? from.top + from.height / 2 : dirY > 0 ? 0 : innerHeight;
     const candidates: { el: HTMLElement; score: number }[] = [];
-    for (const el of document.querySelectorAll<HTMLElement>(FOCUSABLE)) {
+    for (const el of candidatesFor(dialog ?? document)) {
       if (el === active || (el instanceof HTMLButtonElement && el.disabled)) continue;
       const r = nearRect(el);
       if (!r) continue;
@@ -324,7 +266,13 @@
       const dy = r.top + r.height / 2 - oy;
       const along = dx * dirX + dy * dirY; // cuánto avanza en la dirección pedida
       if (along <= 2) continue;
-      candidates.push({ el, score: along + (Math.abs(dx * dirY) + Math.abs(dy * dirX)) * 2.5 }); // penaliza desviarse
+      // Priorizar la misma fila/columna cuando sus bordes se solapan. Así una tarjeta
+      // ancha no hace saltar a la fila inferior sólo por tener su centro más cerca.
+      const aligned = !from || (dirX !== 0
+        ? r.top < from.bottom && r.bottom > from.top
+        : r.left < from.right && r.right > from.left);
+      candidates.push({ el, score: along + (Math.abs(dx * dirY) + Math.abs(dy * dirX)) * 2.5
+        + (aligned ? 0 : Math.max(innerWidth, innerHeight)) });
     }
     // Después, del más cercano al más lejano, el primero que de verdad se ve.
     candidates.sort((a, b) => a.score - b.score);
@@ -335,47 +283,38 @@
     mark(best);
   });
 
-  // ---------- Páginas más livianas (sin cambiar cómo se ven) ----------
-  // Medido en páginas de películas pesadas (miles de elementos): cada cuadro se iba en redibujar y
-  // recalcular las capas de toda la página. Dos causas que no se ven pero cuestan muchísimo:
-  if (location.origin !== HOME_ORIGIN) {
-    //   1. Al desplazarse, el contenido pasa por debajo del cursor y dispara los efectos "hover" de
-    //      cientos de tarjetas. Mientras se desplaza, la página ignora el cursor (técnica clásica).
-    let scrollTimer = 0;
-    const scrolling = (): void => {
-      const root = document.documentElement as HTMLElement | null;
-      if (!root) return;
-      if (!root.hasAttribute('data-ctv-scrolling')) root.setAttribute('data-ctv-scrolling', '');
-      clearTimeout(scrollTimer);
-      scrollTimer = window.setTimeout(() => { root.removeAttribute('data-ctv-scrolling'); }, 180);
-    };
-    addEventListener('wheel', scrolling, { capture: true, passive: true });
-    addEventListener('scroll', scrolling, { capture: true, passive: true });
-
-    //   2. Animaciones decorativas que no terminan nunca (puntitos que titilan, "pings", marquesinas):
-    //      obligan a redibujar en cada cuadro. Se pausan; las de carga (spinners, barras) siguen.
-    const KEEP_RUNNING = /spin|load|rotat|progress|buffer|skeleton|shimmer|pulse/i;
-    const calm = (): void => {
-      for (const animation of document.getAnimations()) {
-        if (!(animation instanceof CSSAnimation) || animation.playState !== 'running') continue;
-        if (animation.effect?.getTiming().iterations !== Infinity || KEEP_RUNNING.test(animation.animationName)) continue;
-        animation.pause();
+  // El botón Atrás del control: primero cierra lo que el sitio tenga abierto (un menú, una ficha).
+  window.__controlTvBack = (): boolean | 'escape' => {
+    const panel = activeOverlay();
+    if (panel) {
+      const trigger = [...document.querySelectorAll<HTMLElement>('[aria-expanded=true][aria-controls]')]
+        .find((el) => el.getAttribute('aria-controls')?.split(/\s+/).includes(panel.id) && visible(el));
+      const close = [...panel.querySelectorAll<HTMLElement>('button[aria-label="Close" i], button[aria-label="Cerrar" i], [role=button][aria-label="Close" i], [role=button][aria-label="Cerrar" i]')].find(visible);
+      if (trigger || close) {
+        (trigger ?? close)?.click();
+        if (trigger?.isConnected) mark(trigger);
+        return true;
       }
-    };
-    addEventListener('load', calm);
-    setInterval(calm, 4000);
-
-    //   3. Netflix reproduce avances solos mientras se recorre el catálogo (medido: Edge al 40–60 % del
-    //      procesador sólo navegando). Fuera de la pantalla de ver (/watch) se pausan; al elegir algo
-    //      para ver, el video anda normal.
-    if (/(^|\.)netflix\.com$/.test(location.hostname)) {
-      setInterval(() => {
-        if (location.pathname.startsWith('/watch')) return;
-        for (const video of document.querySelectorAll('video')) if (!video.paused) video.pause();
-      }, 1000);
+      // Un diálogo sin cierre conocido recibe Escape, sin saltar a otra página por detrás.
+      return 'escape';
     }
+    if (isEditable(document.activeElement) && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+      return true;
+    }
+    return false;
+  };
 
-  }
+  addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.defaultPrevented || isEditable(document.activeElement)) return;
+    if (!marked?.isConnected || document.activeElement !== marked || !visible(marked)) return;
+    // Los controles HTML nativos ya generan click con Enter. Los roles ARIA no lo hacen.
+    if (marked.matches('button, a[href], input, summary, select, textarea')) return;
+    if (!marked.matches('[role=button], [role=link], [role=menuitem], [role=tab], [role=option]')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    marked.click();
+  }, { capture: true });
 
   // ---------- Capa de dibujo (arriba de todo) ----------
 

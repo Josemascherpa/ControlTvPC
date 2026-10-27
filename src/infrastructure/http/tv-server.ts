@@ -41,6 +41,10 @@ export interface TvServerDeps<S extends { readonly token: string }> {
   readonly uiState: () => Contracts.UiState;
   readonly home: () => Contracts.HomeSnapshot;
   readonly apps: () => readonly Contracts.AppTile[];
+  readonly library?: (params: URLSearchParams) => Promise<Contracts.LibraryReply>;
+  /** Trae un archivo de subtítulos (VTT) para el reproductor propio, sin depender de CORS. */
+  readonly subtitle?: (url: string) => Promise<string | null>;
+  readonly hlsScript?: string;
   readonly iconPath: (appId: string) => Promise<string | null>;
   readonly log: Logger;
 }
@@ -49,10 +53,12 @@ type AliveSocket = WebSocket & { alive?: boolean };
 
 type Reply =
   | { readonly kind: 'json'; readonly status: number; readonly body: unknown }
-  | { readonly kind: 'file'; readonly file: string; readonly cache: string };
+  | { readonly kind: 'file'; readonly file: string; readonly cache: string }
+  | { readonly kind: 'text'; readonly status: number; readonly type: string; readonly body: string; readonly cache: string };
 
 const json = (status: number, body: unknown): Reply => ({ kind: 'json', status, body });
 const fileReply = (file: string, cache: string): Reply => ({ kind: 'file', file, cache });
+const textReply = (body: string, type: string, cache: string): Reply => ({ kind: 'text', status: 200, type, body, cache });
 
 /**
  * Servidor de la notebook. Para la red (el celular) habla como una Samsung; para la propia
@@ -109,7 +115,10 @@ export class TvServer<S extends { readonly token: string }> implements UiPublish
   private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const reply = await this.resolve(req);
     if (reply.kind === 'json') send(res, reply.status, reply.body);
-    else await serveFile(res, reply.file, reply.cache);
+    else if (reply.kind === 'text') {
+      res.writeHead(reply.status, { 'Content-Type': reply.type, 'Cache-Control': reply.cache });
+      res.end(reply.body);
+    } else await serveFile(res, reply.file, reply.cache);
   }
 
   /** Decide qué contestar. Separado de cómo se manda, así cada ruta es una línea clara. */
@@ -120,6 +129,13 @@ export class TvServer<S extends { readonly token: string }> implements UiPublish
       return json(200, samsungDeviceInfo(d.deviceName(), d.localAddress() ?? '127.0.0.1', d.port, d.hdmiTv()));
     }
     if (!isLocal(req)) return json(403, { error: 'sólo desde la notebook' });
+    if (pathname === '/api/library' && d.library) return json(200, await d.library(new URL(req.url ?? '/', 'http://x').searchParams));
+    if (pathname === '/api/subtitle' && d.subtitle) {
+      const url = new URL(req.url ?? '/', 'http://x').searchParams.get('url') ?? '';
+      const vtt = url ? await d.subtitle(url) : null;
+      return vtt ? textReply(vtt, 'text/vtt; charset=utf-8', 'max-age=3600') : json(404, { error: 'sin subtítulos' });
+    }
+    if (pathname === '/vendor/hls.js' && d.hlsScript) return fileReply(d.hlsScript, 'no-cache');
     if (pathname === '/api/home') return json(200, d.home());
     if (pathname === '/api/apps') return json(200, d.apps());
     if (pathname === '/api/state') return json(200, d.uiState());

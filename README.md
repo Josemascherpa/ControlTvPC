@@ -41,7 +41,7 @@ notebook ──HDMI──> tele (sólo imagen y sonido: la notebook no le habla 
 | Menú | Abre los Ajustes |
 | Volumen / Silencio | Volumen del sonido que sale por el HDMI al tele (con barrita en pantalla) |
 | Prender/Apagar | Apaga la imagen (el tele queda sin señal y el video se corta). Cualquier botón la vuelve a prender |
-| Pausa | Play/pausa de lo que esté sonando (YouTube, Netflix, Spotify…) |
+| Pausa | Play/pausa de lo que esté sonando (YouTube, Cine, Spotify…) |
 | Canal + / − | Subir / bajar la página |
 | Pestaña Mouse | Touchpad: mueve la flecha propia de la tele; tocar = clic; dos dedos = ruedita (sube/baja lo que está debajo). La flecha se esconde sola a los 5 segundos o al usar las flechas |
 | Pestaña Internet | Buscar en Google/YouTube y abrir páginas. YouTube se abre en su versión para TV |
@@ -74,7 +74,9 @@ Para sacarlo del inicio automático: `desinstalar.ps1`.
   la calienta siempre y, si se recalienta, baja sola su velocidad. Con el mínimo en 5–10 % el turbo
   sube igual al instante cuando hace falta (ver `optimizacion/LEEME.md`).
 - En *Opciones de energía*, que al **cerrar la tapa** no haga nada (la app ya evita que se suspenda).
-- La sesión de Netflix, YouTube, etc. queda guardada: se inicia una sola vez (con el touchpad).
+- La sesión de YouTube, Spotify, etc. queda guardada: se inicia una sola vez (con el touchpad).
+- **Cine ControlTV** no necesita cuenta: usa el catálogo público de FrameX y reproduce las fuentes
+  HLS/MP4 que entrega su API. Si un servidor no responde, prueba con otro automáticamente.
 
 ## Personalizar
 
@@ -110,11 +112,13 @@ src/
     windows/              Win32 (koffi), volumen HDMI, bloqueo del mouse, red
     http/                 servidor + traductor del protocolo Samsung (lo único que sabe de Samsung)
     home/                 clima, dólar, noticias, fondos, íconos (una clase por fuente)
+    media/                catálogo de Cine ControlTV (API de FrameX, validada y con caché)
     storage/              configuración y apps en JSON, validando todo lo que se lee
   app.ts                  raíz de composición: el único lugar que crea las clases concretas
   main.ts                 vigilante: evita abrirla dos veces y la reinicia si se cae
 web/                      la pantalla (TypeScript para el navegador)
   inject.ts               va dentro de cada página: cursor propio, navegación tipo Chromecast, avisos
+  cinema.ts               Cine ControlTV: filas, ficha, buscador y reproductor HLS/MP4
   home/                   inicio: foco con flechas, filas, reloj, fondos, ambiente, ajustes, animaciones
 native/input-host.ps1     el único ayudante nativo (C#): cursor, modo tele (mouse bloqueado y siempre al frente) y volumen
 ui/                       HTML, CSS e íconos; ui/js/ es lo compilado de web/

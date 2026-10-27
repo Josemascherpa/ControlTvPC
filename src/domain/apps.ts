@@ -11,7 +11,7 @@ export interface TvApp {
   readonly name: string;
   readonly category: AppCategory;
   readonly url: string;
-  /** Para reconocer a qué app pertenece una dirección (ej. "netflix.com"). */
+  /** Para reconocer a qué app pertenece una dirección (ej. "youtube.com"). */
   readonly domain: string;
   readonly color: string;
   readonly background: string;

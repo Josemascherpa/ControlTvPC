@@ -17,6 +17,7 @@ export class IdlePowerService {
   private mode: PowerMode | null = null;
   private lastActivity = Date.now();
   private switching: Promise<void> = Promise.resolve();
+  private checking = false;
 
   constructor(
     private readonly plans: PowerPlans,
@@ -42,7 +43,13 @@ export class IdlePowerService {
     this.power.changed.subscribe((on) => {
       if (!on) this.switchTo('saver');
     });
-    setInterval(() => void this.check(), CHECK_MS).unref();
+    setInterval(() => {
+      if (this.checking) return;
+      this.checking = true;
+      void this.check().catch((error: unknown) => {
+        this.log.warn('No se pudo comprobar el reposo:', error);
+      }).finally(() => { this.checking = false; });
+    }, CHECK_MS).unref();
   }
 
   private async check(): Promise<void> {
@@ -61,10 +68,13 @@ export class IdlePowerService {
     const idleMs = this.settings.get('idleMinutes') * 60_000;
     if (Date.now() - this.lastActivity < idleMs) return;
     // Mirando una película nadie toca nada: si hay algo reproduciéndose, sigue "en uso".
+    const activityBeforeProbe = this.lastActivity;
     if (await this.probe.isMediaPlaying()) {
       this.lastActivity = Date.now();
       return;
     }
+    // El celular puede haber despertado el equipo mientras esperábamos al navegador/audio.
+    if (this.lastActivity !== activityBeforeProbe) return;
     this.switchTo('saver');
   }
 

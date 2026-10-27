@@ -3,6 +3,7 @@ import type { MediaKeys, PageKey, TvScreen, UiPublisher } from '../domain/ports'
 import type { PointerService, ScrollDirection } from './pointer-service';
 import type { PowerService } from './power-service';
 import type { VolumeService } from './volume-service';
+import { ScreenCommandQueue } from './screen-command-queue';
 
 /**
  * El scroll de dos dedos del touchpad: la app lo manda como 3 flechas iguales seguidas (llegan en
@@ -26,6 +27,7 @@ interface PendingArrow {
 export class RemoteCommandHandler {
   private pendingArrow: PendingArrow | null = null;
   private lastArrow: { readonly key: RemoteKey; readonly at: number } | null = null;
+  private readonly screenCommands = new ScreenCommandQueue();
 
   constructor(
     private readonly screen: TvScreen,
@@ -45,8 +47,12 @@ export class RemoteCommandHandler {
     }
     switch (command.kind) {
       case 'key': return this.pressKey(command.key);
-      case 'text': return this.screen.insertText(command.text);
-      case 'openUrl': return this.screen.openUrl(command.url);
+      case 'text':
+        this.flushBeforeNext();
+        return this.screenCommands.run(() => this.screen.insertText(command.text));
+      case 'openUrl':
+        this.flushBeforeNext();
+        return this.screenCommands.run(() => this.screen.openUrl(command.url));
       case 'pointerMove':
         this.pointer.move(command.dx, command.dy);
         return;
@@ -64,11 +70,13 @@ export class RemoteCommandHandler {
         this.pendingArrow.count++;
         return;
       }
-      await this.flushArrow();
-      this.pendingArrow = { key, direction, count: 1, timer: setTimeout(() => void this.flushArrow(), BURST_WINDOW_MS) };
+      this.flushBeforeNext();
+      this.pendingArrow = { key, direction, count: 1, timer: setTimeout(() => {
+        void this.flushArrow().catch(() => undefined); // desconexión: la siguiente orden vuelve a intentar
+      }, BURST_WINDOW_MS) };
       return;
     }
-    await this.flushArrow(); // otra tecla: primero lo que estaba esperando, en orden
+    this.flushBeforeNext(); // encola la flecha antes de la nueva orden, sin ceder el turno
     // Modo teclado: flechas iguales pegadas (el deslizar del celular manda varias en pocos ms) cuentan
     // como UNA. Si no, cada una salta una fila y la página se atrasa (medido en Netflix: ráfagas de 17
     // flechas en 2 s y hasta 200 ms de demora por tecla).
@@ -80,19 +88,21 @@ export class RemoteCommandHandler {
     }
     this.pointer.hide();
     switch (key) {
-      case 'UP': case 'DOWN': case 'LEFT': case 'RIGHT': return this.screen.pressKey(key);
-      case 'OK': return this.screen.pressKey('ENTER');
-      case 'BACK': return this.screen.back();
-      case 'HOME': return this.screen.atHome ? this.screen.pressKey('ESCAPE') : this.screen.goHome();
+      case 'UP': case 'DOWN': case 'LEFT': case 'RIGHT': return this.screenCommands.run(() => this.screen.pressKey(key), key);
+      case 'OK': return this.screenCommands.run(() => this.screen.pressKey('ENTER'));
+      case 'BACK': return this.screenCommands.run(() => this.screen.back());
+      case 'HOME': return this.screenCommands.run(() => this.screen.atHome ? this.screen.pressKey('ESCAPE') : this.screen.goHome());
       case 'MENU':
-        if (!this.screen.atHome) await this.screen.goHome();
-        this.ui.publish({ type: 'menu' });
-        return;
-      case 'CHANNEL_UP': return this.screen.pressKey('PAGE_UP');
-      case 'CHANNEL_DOWN': return this.screen.pressKey('PAGE_DOWN');
+        return this.screenCommands.run(async () => {
+          if (!this.screen.atHome) await this.screen.goHome();
+          this.ui.publish({ type: 'menu' });
+        });
+      case 'CHANNEL_UP': return this.screenCommands.run(() => this.screen.pressKey('PAGE_UP'));
+      case 'CHANNEL_DOWN': return this.screenCommands.run(() => this.screen.pressKey('PAGE_DOWN'));
       case 'PLAY_PAUSE':
-        this.media.playPause();
-        return;
+        return this.screenCommands.run(async () => {
+          if (!(await this.screen.togglePlayback?.())) this.media.playPause();
+        });
       case 'VOLUME_UP': return this.volume.apply('up');
       case 'VOLUME_DOWN': return this.volume.apply('down');
       case 'MUTE': return this.volume.apply('mute');
@@ -114,6 +124,12 @@ export class RemoteCommandHandler {
       return;
     }
     this.pointer.hide();
-    await this.screen.pressKey(pending.key as PageKey);
+    await this.screenCommands.run(() => this.screen.pressKey(pending.key as PageKey), pending.key);
+  }
+
+  private flushBeforeNext(): void {
+    // flushArrow encola sincrónicamente. Esperar su respuesta acá permitiría que otra
+    // orden entrante se adelante al Enter/texto que está detrás de esa flecha.
+    void this.flushArrow().catch(() => undefined);
   }
 }
