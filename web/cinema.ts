@@ -66,6 +66,7 @@ const detailClose = byId<HTMLButtonElement>('detailClose');
 const detailKind = byId<HTMLElement>('detailKind');
 const detailTitle = byId<HTMLElement>('detailTitle');
 const detailMeta = byId<HTMLElement>('detailMeta');
+const detailLanguage = byId<HTMLElement>('detailLanguage');
 const detailOverview = byId<HTMLElement>('detailOverview');
 const detailCast = byId<HTMLElement>('detailCast');
 const detailPlay = byId<HTMLButtonElement>('detailPlay');
@@ -157,6 +158,18 @@ function runtimeText(minutes: number): string {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return hours > 0 ? `${hours} h${rest > 0 ? ` ${rest} min` : ''}` : `${rest} min`;
+}
+
+/** Mismo criterio que el servicio: códigos ("es", "spa") y nombres ("Spanish", "Castellano"). */
+function isSpanish(value: string): boolean {
+  const text = value.trim().toLowerCase();
+  if (!text) return false;
+  if (/^(es|spa)([-_]|$)/.test(text)) return true;
+  return /(^|[^a-z])(español|espanol|castellano|spanish|latino|latina)([^a-z]|$)/.test(text);
+}
+
+function subtitleLabel(value: string): string {
+  return value.replace(/^spanish/i, 'Español');
 }
 
 function focusElement(node: HTMLElement | null): void {
@@ -323,7 +336,7 @@ function renderHome(): void {
   if (recent.length) appendRow('Continuar viendo', recent.map((entry) => makeCard(entryTitle(entry), entry)));
   for (const row of catalogRows) appendRow(row.name, row.items.map((item) => makeCard(item)));
   const uniqueCount = new Set(catalogRows.flatMap((row) => row.items).map((item) => `${item.type}:${item.id}`)).size;
-  setStatus(uniqueCount ? `${uniqueCount} títulos · Catálogo FrameX · La reproducción depende del servidor elegido.` : 'No hay títulos para mostrar.');
+  setStatus(uniqueCount ? `${uniqueCount} títulos · Audio o subtítulos en español · Catálogo FrameX` : 'No hay títulos para mostrar.');
   window.scrollTo(0, 0);
   rebuildNav();
   focusInitial();
@@ -332,7 +345,7 @@ function renderHome(): void {
 function renderResults(items: readonly Contracts.LibraryTitle[], query: string): void {
   rowsEl.replaceChildren();
   appendRow(`Resultados para “${query}”`, items.map((item) => makeCard(item)));
-  setStatus(items.length ? `${items.length} resultados · Elegí uno para ver la ficha.` : `No se encontraron títulos para “${query}”.`);
+  setStatus(items.length ? `${items.length} resultados · Se reproduce en español.` : `No se encontraron títulos para “${query}”.`);
   window.scrollTo(0, 0);
   rebuildNav();
   focusInitial();
@@ -609,6 +622,7 @@ async function openDetails(
   options: { autoplay?: boolean; resume?: ProgressEntry } = {},
 ): Promise<void> {
   const token = ++detailToken;
+  playToken++;
   currentItem = item;
   currentDetails = null;
   currentEpisodes = [];
@@ -619,6 +633,7 @@ async function openDetails(
   detailKind.textContent = item.type === 'tv' ? 'Serie' : 'Película';
   detailTitle.textContent = item.title;
   detailMeta.textContent = metaText(item);
+  detailLanguage.textContent = 'Se reproducirá con audio o subtítulos en español.';
   detailOverview.textContent = item.overview;
   detailCast.textContent = '';
   detailStatus.textContent = 'Cargando ficha…';
@@ -653,6 +668,9 @@ async function openDetails(
     if (details) {
       currentDetails = details;
       detailMeta.textContent = metaText(details, details.genres);
+      detailLanguage.textContent = details.originalLanguage === 'es'
+        ? 'Audio original en español.'
+        : 'Se reproducirá con audio o subtítulos en español.';
       detailOverview.textContent = details.overview || item.overview;
       detailCast.textContent = details.cast.length
         ? details.cast.map((person) => (person.character ? `${person.name} (${person.character})` : person.name)).join(' · ')
@@ -695,6 +713,7 @@ async function openDetails(
 function closeDetails(): void {
   if (detailPanel.hidden) return;
   detailToken++;
+  playToken++;
   detailPanel.hidden = true;
   detailPanel.classList.remove('is-open');
   document.body.classList.remove('sheet-open');
@@ -774,6 +793,24 @@ function playVideo(): void {
   });
 }
 
+/** Si el HLS trae varias pistas, arranca en español (el servicio ya descartó las fuentes sin español). */
+function selectSpanishAudio(engine: Hls, source: Contracts.LibrarySource): void {
+  const tracks = engine.audioTracks;
+  if (!tracks.length) return;
+  const wanted = (source.audioTracks ?? []).find((track) => isSpanish(track.lang) || isSpanish(track.label));
+  const index = tracks.findIndex((track) => {
+    const lang = typeof track.lang === 'string' ? track.lang : '';
+    const name = typeof track.name === 'string' ? track.name : '';
+    if (wanted) {
+      if (wanted.lang !== '' && lang.toLowerCase() === wanted.lang.toLowerCase()) return true;
+      if (wanted.label !== '' && name.toLowerCase() === wanted.label.toLowerCase()) return true;
+    }
+    return isSpanish(lang) || isSpanish(name);
+  });
+  const selected = tracks[index];
+  if (selected) engine.audioTrack = index;
+}
+
 async function startVideo(source: Contracts.LibrarySource, subtitles: readonly Contracts.LibrarySubtitle[], token: number): Promise<void> {
   releaseVideo();
   currentSubtitles = subtitles;
@@ -794,9 +831,11 @@ async function startVideo(source: Contracts.LibrarySource, subtitles: readonly C
         .map((level, index) => ({ level, index }))
         .filter(({ level }) => (level.height || 0) <= 1080 && (!level.videoCodec || /^avc/i.test(level.videoCodec)));
       if (compatible.length) engine.autoLevelCapping = compatible[compatible.length - 1]?.index ?? -1;
+      selectSpanishAudio(engine, source);
       addTracks();
       playVideo();
     });
+    engine.on(Engine.Events.AUDIO_TRACKS_UPDATED, () => { selectSpanishAudio(engine, source); });
     engine.on(Engine.Events.ERROR, (_event, data) => {
       if (data.fatal && token === playToken) void tryNextServer(token);
     });
@@ -818,36 +857,36 @@ function nextContext(item: Contracts.LibraryTitle, season: number, episode: numb
     : null;
 }
 
+/** Lo que se muestra en el reproductor: confirma si va con audio o con subtítulos en español. */
+function sourceLanguage(source: Contracts.LibrarySource): string {
+  const audio = source.audio ?? '';
+  const tracks = source.audioTracks ?? [];
+  const spanishAudio = audio !== ''
+    ? isSpanish(audio)
+    : tracks.some((track) => isSpanish(track.lang) || isSpanish(track.label));
+  return spanishAudio ? 'Audio en español' : 'Subtítulos en español';
+}
+
 async function startPlayback(
   item: Contracts.LibraryTitle, season: number, episode: number, name: string, provider?: string,
 ): Promise<void> {
   const token = ++playToken;
-  returnToDetails = !detailPanel.hidden;
+  const fromDetails = !detailPanel.hidden;
+  // Si ya había una ficha abierta (o se viene de "siguiente episodio"), Atrás vuelve a ella.
+  returnToDetails = fromDetails || currentDetails !== null;
   triedProviders = provider ? [provider] : [];
   playerContext = { item, season, episode, name, next: nextContext(item, season, episode) };
   const key = progressKey(item.type, item.id, season, episode);
   resumeAt = savedTime(key);
-  player.hidden = false;
-  document.body.classList.add('playing');
-  document.body.classList.remove('sheet-open');
-  detailPanel.hidden = true;
-  playerTop.hidden = false;
-  playerControls.hidden = false;
-  player.classList.remove('idle');
-  playingTitle.textContent = item.title;
-  playingMeta.textContent = item.type === 'tv' ? `T${season} E${episode}${name ? ` · ${name}` : ''}` : metaText(item);
-  playerStatus.textContent = 'Buscando servidor…';
-  retryBtn.hidden = true;
   nextBtn.hidden = !playerContext.next;
   nextBtn.textContent = playerContext.next?.name ? `Siguiente: ${playerContext.next.name}` : 'Siguiente episodio';
   releaseVideo();
-  if ('mediaSession' in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: item.title,
-      artist: 'Cine ControlTV',
-      album: item.year,
-      artwork: item.poster ? [{ src: item.poster }] : [],
-    });
+  if (fromDetails) {
+    detailStatus.textContent = 'Buscando servidor con audio o subtítulos en español…';
+    detailPlay.disabled = true;
+  } else {
+    playerStatus.textContent = 'Buscando servidor…';
+    retryBtn.hidden = true;
   }
   const params: Record<string, string> = { id: item.id, type: item.type };
   if (item.type === 'tv') {
@@ -861,14 +900,46 @@ async function startPlayback(
     const source = reply.sources?.[0];
     if (!source) throw new Error('Ese servidor no entregó una fuente compatible.');
     if (reply.provider) triedProviders.push(reply.provider);
-    playingMeta.textContent = `${playingMeta.textContent}${source.quality ? ` · ${source.quality}` : ''}`;
+    if (fromDetails) {
+      detailPlay.disabled = false;
+      detailStatus.textContent = '';
+      detailPanel.hidden = true;
+      document.body.classList.remove('sheet-open');
+    }
+    player.hidden = false;
+    document.body.classList.add('playing');
+    playerTop.hidden = false;
+    playerControls.hidden = false;
+    player.classList.remove('idle');
+    playingTitle.textContent = item.title;
+    const line = item.type === 'tv' ? `T${season} E${episode}${name ? ` · ${name}` : ''}` : metaText(item);
+    playingMeta.textContent = [line, source.quality, sourceLanguage(source)].filter((part) => part !== '').join(' · ');
+    playerStatus.textContent = 'Cargando video…';
+    retryBtn.hidden = true;
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: item.title,
+        artist: 'Cine ControlTV',
+        album: item.year,
+        artwork: item.poster ? [{ src: item.poster }] : [],
+      });
+    }
     await startVideo(source, reply.subtitles ?? [], token);
   } catch (error) {
     if (token !== playToken) return;
     releaseVideo();
-    playerStatus.textContent = errorText(error);
-    retryBtn.hidden = false;
-    focusElement(retryBtn);
+    detailPlay.disabled = false;
+    if (fromDetails) {
+      // No se entra al reproductor para mostrar un error: se queda en la ficha.
+      player.hidden = true;
+      document.body.classList.remove('playing');
+      detailStatus.textContent = errorText(error);
+      focusElement(detailPlay);
+    } else {
+      playerStatus.textContent = errorText(error);
+      retryBtn.hidden = false;
+      focusElement(retryBtn);
+    }
   }
 }
 
@@ -950,7 +1021,7 @@ function cycleSubtitles(): void {
   if (subtitleIndex >= currentSubtitles.length) subtitleIndex = -1;
   applySubtitleMode();
   const subtitle = subtitleIndex >= 0 ? currentSubtitles[subtitleIndex] : undefined;
-  toast(subtitleIndex < 0 ? 'Subtítulos desactivados' : `Subtítulos: ${subtitle?.label ?? ''}`);
+  toast(subtitleIndex < 0 ? 'Subtítulos desactivados' : `Subtítulos: ${subtitle ? subtitleLabel(subtitle.label) : ''}`);
 }
 
 function cycleAudio(): void {
@@ -960,7 +1031,8 @@ function cycleAudio(): void {
   }
   hls.audioTrack = (hls.audioTrack + 1) % hls.audioTracks.length;
   const track = hls.audioTracks[hls.audioTrack];
-  toast(`Audio: ${track?.name ?? `pista ${hls.audioTrack + 1}`}`);
+  const label = track ? (isSpanish(track.lang ?? '') || isSpanish(track.name) ? 'Español' : track.name) : '';
+  toast(`Audio: ${label || `pista ${hls.audioTrack + 1}`}`);
 }
 
 function stopPlayer(): void {

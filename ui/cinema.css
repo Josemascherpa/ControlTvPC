@@ -75,6 +75,7 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 .detail-body .overview{-webkit-line-clamp:5;max-width:74ch;font-size:15.5px}
 .detail-body .eyebrow{margin-bottom:6px}
 .cast{margin:0 0 20px;font-size:13px;color:#b3bfc9;max-width:74ch}
+.lang-note{margin:-2px 0 12px;font-size:12px;font-weight:600;letter-spacing:.2px;color:var(--accent)}
 .cast b{color:#fff;font-weight:600}
 .seasons{display:flex;gap:8px;overflow-x:auto;padding:6px 0 12px;scrollbar-width:none}
 .seasons::-webkit-scrollbar{display:none}

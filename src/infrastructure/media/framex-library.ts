@@ -28,8 +28,9 @@ const RAILS = [
 ] as const;
 const ID = /^\d{1,12}$/;
 const PROVIDER_ID = /^[a-z_]{1,40}$/;
-const SUBTITLE_HOST = /(^|\.)strem\.io$/;
+const SUBTITLE_HOST = /(^|\.)(strem\.io|vdrk\.site|opensubtitles\.org|opensubtitles\.com)$/;
 const NETWORK_ERROR = 'La fuente no respondió. Revisá la conexión y reintentá.';
+const SPANISH_ONLY_ERROR = 'Este título no tiene audio ni subtítulos en español en los servidores disponibles.';
 
 interface Planned {
   readonly path: string;
@@ -45,6 +46,16 @@ interface Rejected {
 interface CacheEntry {
   readonly until: number;
   readonly value: Contracts.LibraryReply;
+}
+
+/** Una fuente candidata, ya validada, con lo que hace falta para decidir si sirve en español. */
+interface CandidateSource {
+  readonly url: string;
+  readonly type: 'hls' | 'mp4';
+  readonly quality: string;
+  readonly server: string;
+  readonly audio: string;
+  readonly audioTracks: readonly Contracts.LibraryAudioTrack[];
 }
 
 const rejected = (error: string): Rejected => ({ error });
@@ -74,6 +85,27 @@ function clean(value: unknown, max: number): string {
 function rating(value: unknown): string {
   const text = typeof value === 'number' ? value.toFixed(1) : asString(value);
   return /^\d{1,2}(\.\d)?$/.test(text) ? text : '';
+}
+
+/**
+ * ¿Ese código o etiqueta es español/castellano? Se aceptan las dos formas: "es"/"spa" y los nombres
+ * ("Spanish", "Español", "Castellano", "Latino"). No confundir con "Estonian" (et).
+ */
+function isSpanish(value: string): boolean {
+  const text = value.trim().toLowerCase();
+  if (!text) return false;
+  if (/^(es|spa)([-_]|$)/.test(text)) return true;
+  return /(^|[^a-z])(español|espanol|castellano|spanish|latino|latina)([^a-z]|$)/.test(text);
+}
+
+/** "Subtitles • Spanish (2)" → "Spanish (2)"; si no hay etiqueta útil, "Español". */
+function subtitleLabel(value: string): string {
+  return value.replace(/^subtitles?\s*[•·-]\s*/i, '').trim() || 'Español';
+}
+
+/** Para Argentina: primero las variantes latinas, después las de España. */
+function latinRank(subtitle: Contracts.LibrarySubtitle): number {
+  return /latino|latina|\(la\)|\bla\b/i.test(`${subtitle.label} ${subtitle.url}`) ? 0 : 1;
 }
 
 function idOf(value: unknown): string {
@@ -290,6 +322,7 @@ export class FramexLibrary implements MediaLibrary {
         ...base,
         genres: genres.slice(0, 5),
         runtime: asNullableNumber(raw['runtime']),
+        originalLanguage: clean(raw['original_language'], 8).toLowerCase(),
         cast,
         seasons: uniqueSeasons,
         related,
@@ -332,7 +365,20 @@ export class FramexLibrary implements MediaLibrary {
 
   private async stream(plan: Planned, provider: string): Promise<Contracts.LibraryReply> {
     const raw = asRecord(await this.json(`${ORIGIN}${plan.path}?${plan.query.toString()}`));
-    const sources = unique(asArray(raw['sources']).flatMap((item) => {
+    const subtitles = unique(asArray(raw['subtitles']).flatMap((item) => {
+      const subtitle = asRecord(item);
+      const url = safeUrl(subtitle['url'], ['https:']);
+      const host = url ? new URL(url).hostname : '';
+      if (!url || !SUBTITLE_HOST.test(host)) return [];
+      const lang = clean(subtitle['lang'], 20).toLowerCase();
+      const label = clean(subtitle['label'], 80);
+      if (!isSpanish(lang) && !isSpanish(label)) return [];
+      return [{ url, label: subtitleLabel(label), lang }];
+    }), (subtitle) => subtitle.url).sort((a, b) => latinRank(a) - latinRank(b));
+    // El idioma original sólo hace falta cuando no hay subtítulos en español y la fuente no anuncia
+    // sus pistas de audio (se consulta una vez y queda en la caché de la ficha).
+    const original = subtitles.length > 0 ? '' : await this.originalLanguage(plan.query.get('id') ?? '', plan.query.get('type') ?? '');
+    const collected = unique(asArray(raw['sources']).flatMap((item): CandidateSource[] => {
       const source = asRecord(item);
       const url = safeUrl(source['url'], ['https:', 'http:']);
       const rawType = source['type'];
@@ -341,21 +387,42 @@ export class FramexLibrary implements MediaLibrary {
       if (rawType === 'hls') type = 'hls';
       else if (rawType === 'mp4') type = 'mp4';
       else return [];
-      return [{ url, type, quality: clean(source['quality'], 20) || 'Auto', server: clean(source['server'], 80) || provider }];
+      const audioTracks = asArray(source['audioTracks']).flatMap((track): Contracts.LibraryAudioTrack[] => {
+        const record = asRecord(track);
+        const lang = clean(record['language'] ?? record['lang'], 20).toLowerCase();
+        const label = clean(record['label'], 40);
+        return lang !== '' || label !== '' ? [{ lang, label }] : [];
+      });
+      return [{
+        url, type,
+        quality: clean(source['quality'], 20) || 'Auto',
+        server: clean(source['server'], 80) || provider,
+        audio: clean(source['audio'], 20).toLowerCase(),
+        audioTracks,
+      }];
     }), (source) => source.url);
-    const subtitles = unique(asArray(raw['subtitles']).flatMap((item) => {
-      const subtitle = asRecord(item);
-      const url = safeUrl(subtitle['url'], ['https:']);
-      const host = url ? new URL(url).hostname : '';
-      if (!url || !SUBTITLE_HOST.test(host)) return [];
-      return [{ url, label: clean(subtitle['label'], 80), lang: clean(subtitle['lang'], 20).toLowerCase() }];
-    }), (subtitle) => subtitle.url).sort((a, b) => Number(b.lang.startsWith('es')) - Number(a.lang.startsWith('es')));
-    return {
-      provider: asString(raw['provider'], provider),
-      sources,
-      subtitles,
-      alternates: unique(providerIds(raw['alternates']).filter((id) => id !== provider), (id) => id),
-    };
+    // Sólo se aceptan fuentes que puedan verse en español: pista de audio española, subtítulos en
+    // español, o título original en español sin datos de audio que lo contradigan.
+    const sources = collected.filter((source) => {
+      const spanishAudio = source.audio !== ''
+        ? isSpanish(source.audio)
+        : source.audioTracks.some((track) => isSpanish(track.lang) || isSpanish(track.label));
+      const hasAudioInfo = source.audio !== '' || source.audioTracks.length > 0;
+      return spanishAudio || subtitles.length > 0 || (!hasAudioInfo && isSpanish(original));
+    });
+    const alternates = unique(providerIds(raw['alternates']).filter((id) => id !== provider), (id) => id);
+    if (collected.length > 0 && sources.length === 0) {
+      return { provider: asString(raw['provider'], provider), sources: [], subtitles, alternates, error: SPANISH_ONLY_ERROR };
+    }
+    return { provider: asString(raw['provider'], provider), sources, subtitles, alternates };
+  }
+
+  /** Idioma original del título, para aceptar audio original español cuando no hay metadatos de pista. */
+  private async originalLanguage(id: string, type: string): Promise<string> {
+    const plan = this.plan('details', new URLSearchParams({ id, type }));
+    if (!isPlanned(plan)) return '';
+    const reply = await this.cached(`${ORIGIN}${plan.path}?${plan.query.toString()}`, plan.ttl, () => this.load(plan));
+    return reply.details?.originalLanguage ?? '';
   }
 
   /**
@@ -393,7 +460,8 @@ export class FramexLibrary implements MediaLibrary {
         return { ...result, alternates: unique(others, (value) => value) };
       }
     }
-    return rejected('Ningún servidor entregó una fuente compatible. Probá otro título.');
+    const blockedByLanguage = results.some((result) => result?.error === SPANISH_ONLY_ERROR);
+    return rejected(blockedByLanguage ? SPANISH_ONLY_ERROR : 'Ningún servidor entregó una fuente compatible. Probá otro título.');
   }
 
   private title(raw: Readonly<Record<string, unknown>>, overviewLength: number): Contracts.LibraryTitle | null {

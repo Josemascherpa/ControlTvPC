@@ -10,8 +10,8 @@ const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 
 test('Cine propio: catálogo con flechas, ficha, reproducción real y liberación al salir', { timeout: 90000 }, async (t) => {
   let videoBytes = Buffer.alloc(0);
-  const movie = { id: '1', type: 'movie', title: 'Muestra de prueba', poster: '', backdrop: '', year: '2026', rating: '7.5', overview: 'Video generado localmente.', genres: ['Prueba'], runtime: 90, cast: [], seasons: [] };
-  const tv = { id: '2', type: 'tv', title: 'Serie de prueba', poster: '', backdrop: '', year: '2025', rating: '8.0', overview: 'Serie de prueba.', genres: ['Drama'], runtime: null, cast: [{ name: 'Ana', character: 'Marta' }], seasons: [{ number: 1, name: 'Season 1', episodes: 1 }] };
+  const movie = { id: '1', type: 'movie', title: 'Muestra de prueba', poster: '', backdrop: '', year: '2026', rating: '7.5', overview: 'Video generado localmente.', genres: ['Prueba'], runtime: 90, cast: [], seasons: [], originalLanguage: 'es' };
+  const tv = { id: '2', type: 'tv', title: 'Serie de prueba', poster: '', backdrop: '', year: '2025', rating: '8.0', overview: 'Serie de prueba.', genres: ['Drama'], runtime: null, cast: [{ name: 'Ana', character: 'Marta' }], seasons: [{ number: 1, name: 'Season 1', episodes: 1 }], originalLanguage: 'es' };
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname === '/api/library') {

@@ -77,6 +77,8 @@ Para sacarlo del inicio automático: `desinstalar.ps1`.
 - La sesión de YouTube, Spotify, etc. queda guardada: se inicia una sola vez (con el touchpad).
 - **Cine ControlTV** no necesita cuenta: usa el catálogo público de FrameX y reproduce las fuentes
   HLS/MP4 que entrega su API. Si un servidor no responde, prueba con otro automáticamente.
+  Sólo reproduce con **audio o subtítulos en español**; si un título no tiene ninguna de las dos
+  cosas, avisa en la ficha en vez de abrirlo en inglés.
 
 ## Personalizar
 

@@ -32,6 +32,8 @@ declare namespace Contracts {
     readonly runtime: number | null;
     readonly cast: readonly LibraryCast[];
     readonly seasons: readonly LibrarySeason[];
+    /** Idioma original del título (código TMDB: "es", "en"…). */
+    readonly originalLanguage?: string;
     /** Títulos parecidos, para seguir explorando desde la ficha. */
     readonly related?: readonly LibraryTitle[];
   }
@@ -49,12 +51,21 @@ declare namespace Contracts {
     readonly name: string;
     readonly tagline: string;
   }
+  /** Una pista de audio que anuncia el servidor. */
+  interface LibraryAudioTrack {
+    readonly lang: string;
+    readonly label: string;
+  }
   /** Una fuente reproducible: HLS (.m3u8) o MP4 directo. Nunca iframes ni scripts. */
   interface LibrarySource {
     readonly url: string;
     readonly type: 'hls' | 'mp4';
     readonly quality: string;
     readonly server: string;
+    /** Idioma de esta variante, si el servidor las separa ("es", "en"…). */
+    readonly audio?: string;
+    /** Pistas incluidas en la misma fuente (HLS multi-audio). */
+    readonly audioTracks?: readonly LibraryAudioTrack[];
   }
   interface LibrarySubtitle {
     readonly url: string;

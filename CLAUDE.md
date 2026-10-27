@@ -116,8 +116,14 @@ carga la web del proveedor ni se ejecuta su JavaScript: sólo se validan los dat
   `clientOnly` (ejecutan código en el navegador). Al pedir "Reproducir" se prueban hasta 4 en
   paralelo y se usa el primero por orden de preferencia; si la reproducción falla, el reproductor
   pide otro con `exclude`. La lista de servidores cambia: no fijar ids en el código del cliente.
-- **Subtítulos:** la API entrega VTT de `*.strem.io`; se piden por `/api/subtitle` (lista blanca de
-  host, HTTPS, 512 KB, sólo si empieza con `WEBVTT`) para no depender de CORS. Español primero.
+- **Subtítulos:** la API entrega VTT de `*.strem.io` y `*.vdrk.site`; se piden por `/api/subtitle`
+  (lista blanca de hosts, HTTPS, 512 KB, sólo si empieza con `WEBVTT`) para no depender de CORS.
+  Sólo se muestran los de español (latino primero).
+- **Sólo español:** una fuente se descarta si anuncia audio no español y no tiene subtítulos en
+  español; se acepta si tiene audio español (`es`/`spa`/"Spanish") o subtítulos en español; sin
+  datos de audio, sólo si el título es originalmente español (`original_language` de la ficha). Si
+  ningún servidor cumple, la ficha lo dice y no reproduce la versión en inglés. En HLS multi-audio
+  se elige la pista española al empezar.
 - **Pantalla:** `ui/cinema.html` + `web/cinema.ts`. Portada, filas horizontales, ficha con reparto,
   temporadas y episodios, y reproductor propio (`<video>` + hls.js sólo para HLS; MP4 directo).
   Navegación por filas/índices (no geométrica): 160 tarjetas sin medir 160 rectángulos por tecla.
