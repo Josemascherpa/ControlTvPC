@@ -72,6 +72,11 @@ y se cuentan los cuadros con una traza (`PipelineReporter`: completos / parciale
 - YouTube: forzar H.264 (h264ify en inject.ts, responde `MediaSource.isTypeSupported`, `canPlayType` y
   `mediaCapabilities.decodingInfo`) — VP9/AV1 no se decodifican por hardware en ninguna de las dos
   placas. Verificado con el dominio `Media` de DevTools: decodificador `D3D11VideoDecoder`, `hw=true`.
+- **Versiones web para TV** (probado presentándose como Samsung/Tizen y LG/webOS, oct. 2026): sólo
+  **YouTube** tiene una (`youtube.com/tv`, ~215 elementos contra ~3.000 de la web normal; ya se usa).
+  Pluto, Twitch, Prime, Netflix y Disney+ muestran la misma página; `tv.spotify.com` no existe;
+  Spotify con identificación de LG muestra la versión para celular ("Abrir aplicación") y YouTube
+  Music con la de tele dice "navegador obsoleto". No vale la pena cambiarles la identificación.
 - Al abrir una app, la orden sale a los 140 ms (antes esperaba los 420 ms de la animación).
 - Navegación con flechas en páginas externas: primero sólo posiciones, el estilo se revisa sólo en los
   mejores candidatos; repeticiones de una flecha mantenida, como mucho una cada 45 ms.
