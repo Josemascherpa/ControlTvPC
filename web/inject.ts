@@ -234,6 +234,16 @@
     addEventListener('load', calm);
     setInterval(calm, 4000);
 
+    //   3. Netflix reproduce avances solos mientras se recorre el catálogo (medido: Edge al 40–60 % del
+    //      procesador sólo navegando). Fuera de la pantalla de ver (/watch) se pausan; al elegir algo
+    //      para ver, el video anda normal.
+    if (/(^|\.)netflix\.com$/.test(location.hostname)) {
+      setInterval(() => {
+        if (location.pathname.startsWith('/watch')) return;
+        for (const video of document.querySelectorAll('video')) if (!video.paused) video.pause();
+      }, 1000);
+    }
+
   }
 
   // ---------- Capa de dibujo (arriba de todo) ----------

@@ -11,6 +11,8 @@ import type { VolumeService } from './volume-service';
 const SCROLL_KEYS: Partial<Readonly<Record<RemoteKey, ScrollDirection>>> = { UP: 'up', DOWN: 'down', LEFT: 'left', RIGHT: 'right' };
 /** Cuánto se espera, sólo en modo mouse, a ver si una flecha viene en ráfaga (scroll) o sola (navegación). */
 const BURST_WINDOW_MS = 80;
+/** En modo teclado, una flecha igual a la anterior que llega antes de esto es parte de la misma ráfaga. */
+const KEYBOARD_BURST_MS = 40;
 
 /** Una flecha recibida en modo mouse, esperando a ver si llegan más iguales. */
 interface PendingArrow {
@@ -23,6 +25,7 @@ interface PendingArrow {
 /** Ejecuta lo que pide el control remoto. No sabe nada del protocolo del celular ni de Edge. */
 export class RemoteCommandHandler {
   private pendingArrow: PendingArrow | null = null;
+  private lastArrow: { readonly key: RemoteKey; readonly at: number } | null = null;
 
   constructor(
     private readonly screen: TvScreen,
@@ -66,6 +69,15 @@ export class RemoteCommandHandler {
       return;
     }
     await this.flushArrow(); // otra tecla: primero lo que estaba esperando, en orden
+    // Modo teclado: flechas iguales pegadas (el deslizar del celular manda varias en pocos ms) cuentan
+    // como UNA. Si no, cada una salta una fila y la página se atrasa (medido en Netflix: ráfagas de 17
+    // flechas en 2 s y hasta 200 ms de demora por tecla).
+    if (direction) {
+      const now = Date.now();
+      const previous = this.lastArrow;
+      this.lastArrow = { key, at: now };
+      if (previous?.key === key && now - previous.at < KEYBOARD_BURST_MS) return;
+    }
     this.pointer.hide();
     switch (key) {
       case 'UP': case 'DOWN': case 'LEFT': case 'RIGHT': return this.screen.pressKey(key);
