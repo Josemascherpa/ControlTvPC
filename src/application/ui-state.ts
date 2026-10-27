@@ -47,7 +47,9 @@ export class UiStateService {
   /** Las apps del inicio que eligió la persona (las que ya no existen se descartan). */
   private homeApps(): readonly string[] {
     const chosen = this.settings.get('homeApps') ?? this.apps.defaultHome();
-    return chosen.filter((id) => this.apps.find(id) !== undefined);
+    const active = chosen.filter((id) => this.apps.find(id) !== undefined);
+    // Si la lista guardada era sólo de plataformas retiradas, vuelve la selección por defecto.
+    return active.length > 0 ? active : this.apps.defaultHome();
   }
 
   /** Si cambian varias cosas juntas (ej. volumen apretado rápido), se manda un solo aviso. */

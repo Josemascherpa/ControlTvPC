@@ -105,8 +105,23 @@ test('Atrás restablece identidad ANTES de navegar desde YouTube TV a otra app',
   ]);
 });
 
-test('reposo: actividad mientras se consulta el video no termina en ahorro', async () => {
-  const { IdlePowerService } = require('../dist/application/idle-power-service');
+test('inicio: una lista vieja de apps retiradas vuelve a la selección de fábrica', () => {
+  const { UiStateService } = require('../dist/application/ui-state');
+  const apps = {
+    list: () => [], forUrl: () => undefined, reload: () => undefined,
+    find: (id) => (['cinema', 'youtube'].includes(id) ? { id } : undefined),
+    defaultHome: () => ['cinema', 'youtube'],
+  };
+  const values = { homeApps: ['netflix', 'disney'], name: 'Notebook TV', ambientMinutes: 3, gpu: 'integrated' };
+  const settings = { get: (key) => values[key] };
+  const service = new UiStateService(
+    settings, { localAddress: () => null }, { pairedCount: 0, allowNew: true },
+    { names: [], changed: { subscribe() {} } }, { current: null, changed: { subscribe() {} } }, { publish() {} }, apps,
+  );
+  assert.deepEqual(service.current().homeApps, ['cinema', 'youtube']);
+});
+
+test('reposo: actividad mientras se consulta el video no termina en ahorro', async () => {  const { IdlePowerService } = require('../dist/application/idle-power-service');
   let release;
   const activations = [];
   const service = new IdlePowerService(
