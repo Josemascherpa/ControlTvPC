@@ -21,29 +21,12 @@ export interface KeyEventParams {
   readonly text?: string;
 }
 
-export type MouseEventParams =
-  | { readonly type: 'mouseMoved'; readonly x: number; readonly y: number }
-  | {
-    readonly type: 'mousePressed' | 'mouseReleased';
-    readonly x: number;
-    readonly y: number;
-    readonly button: 'left' | 'right';
-    readonly clickCount: number;
-  }
-  | { readonly type: 'mouseWheel'; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number };
-
 export interface CdpCommands {
-  'Media.enable': { params: Empty; result: Empty };
-  'Media.disable': { params: Empty; result: Empty };
   'Target.setDiscoverTargets': { params: { discover: boolean }; result: Empty };
   'Target.getTargets': { params: Empty; result: { targetInfos: readonly TargetInfo[] } };
   'Target.createTarget': { params: { url: string }; result: { targetId: string } };
   'Target.attachToTarget': { params: { targetId: string; flatten: true }; result: { sessionId: string } };
   'Target.closeTarget': { params: { targetId: string }; result: { success: boolean } };
-  /** Engancharse solo a los iframes de otro sitio (y workers) apenas se crean, frenados hasta prepararlos. */
-  'Target.setAutoAttach': { params: { autoAttach: boolean; waitForDebuggerOnStart: boolean; flatten: true }; result: Empty };
-  /** Deja seguir a un iframe que quedó frenado esperando (ver Target.setAutoAttach). */
-  'Runtime.runIfWaitingForDebugger': { params: Empty; result: Empty };
   'Browser.getWindowForTarget': { params: { targetId: string }; result: { windowId: number } };
   'Browser.getWindowBounds': { params: { windowId: number }; result: { bounds: { windowState: WindowState } } };
   'Browser.setWindowBounds': { params: { windowId: number; bounds: { windowState: WindowState } }; result: Empty };
@@ -57,32 +40,18 @@ export interface CdpCommands {
   'Page.addScriptToEvaluateOnNewDocument': { params: { source: string }; result: { identifier: string } };
   'Page.navigate': { params: { url: string }; result: { frameId: string } };
   'Page.bringToFront': { params: Empty; result: Empty };
-  'Page.getNavigationHistory': {
-    params: Empty;
-    result: { currentIndex: number; entries: readonly { id: number; url: string }[] };
-  };
-  'Page.navigateToHistoryEntry': { params: { entryId: number }; result: Empty };
-  'Page.getLayoutMetrics': { params: Empty; result: { cssLayoutViewport: { clientWidth: number; clientHeight: number } } };
-  'Page.captureScreenshot': { params: { format: 'jpeg' | 'png'; quality?: number }; result: { data: string } };
   'Runtime.evaluate': {
     params: { expression: string; returnByValue?: boolean; awaitPromise?: boolean };
     result: { result: { type: string; value?: unknown } };
   };
-  'Network.setUserAgentOverride': { params: { userAgent: string }; result: Empty };
   'Input.dispatchKeyEvent': { params: KeyEventParams; result: Empty };
-  'Input.dispatchMouseEvent': { params: MouseEventParams; result: Empty };
   'Input.insertText': { params: { text: string }; result: Empty };
-  'Fetch.enable': { params: { patterns: readonly { readonly urlPattern: string }[] }; result: Empty };
-  'Fetch.failRequest': { params: { requestId: string; errorReason: 'BlockedByClient' }; result: Empty };
 }
 
 export interface CdpEvents {
-  'Media.playerPropertiesChanged': { playerId: string; properties: readonly { name: string; value: string }[] };
   'Target.targetCreated': { targetInfo: TargetInfo };
   'Target.targetInfoChanged': { targetInfo: TargetInfo };
   'Target.targetDestroyed': { targetId: string };
-  'Target.attachedToTarget': { sessionId: string; targetInfo: TargetInfo; waitingForDebugger: boolean };
-  'Fetch.requestPaused': { requestId: string; request: { url: string } };
 }
 
 export type CdpMethod = keyof CdpCommands;

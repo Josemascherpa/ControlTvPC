@@ -2,22 +2,22 @@
   "name": "controltv-pc",
   "version": "2.0.0",
   "private": true,
-  "description": "ControlTv PC: convierte la notebook en una Smart TV manejada desde el celular",
-  "main": "dist/main.js",
+  "description": "ControlTv PC: la notebook como tele con el Cine, manejada desde el celular",
+  "main": "dist/src/main.js",
   "scripts": {
     "build": "npm run build:typescript && npm run build:native",
-    "build:typescript": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
+    "build:typescript": "tsc -p tsconfig.json && tsc -p web/tsconfig.json && npm run build:vendor",
+    "build:vendor": "node -e \"require('fs').mkdirSync('ui/vendor',{recursive:true});require('fs').copyFileSync('node_modules/hls.js/dist/hls.min.js','ui/vendor/hls.js')\"",
     "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -File native/build-native.ps1",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "lint": "eslint .",
     "check": "npm run typecheck && npm run lint",
     "test": "npm run build:typescript && node --test tests/*.test.cjs",
-    "start": "node dist/main.js"
+    "start": "node dist/src/main.js"
   },
   "dependencies": {
     "hls.js": "1.7.3",
     "koffi": "2.9.0",
-    "undici": "6.21.0",
     "ws": "8.22.0"
   },
   "devDependencies": {

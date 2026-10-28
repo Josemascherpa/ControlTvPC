@@ -1,11 +1,12 @@
 {
-  // Pantalla de inicio y script que se mete en cada página (corren en Edge).
+  // El Cine (la app, en ui/js/web/cine) y el script que le agrega la notebook (ui/js/web/inject.js).
+  // Compila también shared/ (lo comparte con el servicio): la salida queda en ui/js/web y ui/js/shared.
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ES2022",
     "moduleResolution": "bundler",
-    "rootDir": ".",
+    "rootDir": "..",
     "outDir": "../ui/js",
     "types": [],
     "strict": true,
@@ -18,5 +19,5 @@
     "useUnknownInCatchVariables": true,
     "skipLibCheck": true
   },
-  "include": ["**/*.ts", "../shared/**/*.d.ts"]
+  "include": ["**/*.ts", "../shared/**/*.ts"]
 }

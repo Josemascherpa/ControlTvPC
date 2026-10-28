@@ -1,4 +1,4 @@
-import type { DisplayPower, InputLock, Logger, PhysicalTv, SettingsStore, TvScreen } from '../domain/ports';
+import type { DisplayPower, InputLock, Logger, MediaActivity, PhysicalTv, SettingsStore, TvScreen } from '../domain/ports';
 import { Signal } from '../domain/signal';
 
 const HOUR_MS = 3_600_000;
@@ -8,7 +8,7 @@ const HOUR_MS = 3_600_000;
  * encendido del celular lo prende y lo apaga de verdad; si no, apagar es cortar la imagen del HDMI
  * (el tele queda sin señal y muchos se apagan solos al rato). Cuando el tele se prende (con lo que
  * sea), la tele aparece al frente. Además, como un tele de verdad, se apaga sola si nadie la usa
- * por varias horas en el inicio.
+ * por varias horas y no se está viendo nada.
  */
 export class PowerService {
   readonly changed = new Signal<boolean>();
@@ -23,6 +23,7 @@ export class PowerService {
     private readonly inputLock: InputLock,
     private readonly settings: SettingsStore,
     private readonly log: Logger,
+    private readonly media: MediaActivity,
     private readonly tv: PhysicalTv | null = null,
   ) {
     display.keepAwake(true);
@@ -86,7 +87,7 @@ export class PowerService {
 
   private async checkAutoOff(): Promise<void> {
     const hours = this.settings.get('autoOffHours');
-    if (hours > 0 && this.on && this.screen.atHome && Date.now() - this.lastActivity > hours * HOUR_MS) {
+    if (hours > 0 && this.on && Date.now() - this.lastActivity > hours * HOUR_MS && !(await this.media.isPlaying())) {
       await this.turnOff();
     }
   }

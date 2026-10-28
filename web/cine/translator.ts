@@ -1,12 +1,9 @@
-import { createHash } from 'crypto';
-import { existsSync, readFileSync } from 'fs';
-import { writeFile } from 'fs/promises';
-import { asArray, asRecord, asString } from '../storage/json';
-import { pooledFetch } from './http-pool';
+import { asArray, asString } from '../../shared/json.js';
+import type { KeyValueStore } from './store.js';
 
 // Las sinopsis del catálogo vienen en inglés (la API no acepta idioma). Se traducen al español con
-// el traductor público de Google (medido: ~0,5 s cada una) y cada traducción se guarda en el disco:
-// cada sinopsis se traduce UNA sola vez, para siempre.
+// el traductor público de Google (medido: ~0,2–0,5 s cada una) y cada traducción queda guardada en el
+// navegador: cada sinopsis se traduce UNA sola vez, para siempre.
 
 interface Endpoint {
   readonly name: string;
@@ -34,6 +31,7 @@ const ENDPOINTS: readonly Endpoint[] = [
 ];
 /** Un traductor que limitó descansa esto antes de volver a probarlo. */
 const BLOCKED_MS = 15 * 60_000;
+/** Traducciones guardadas como mucho (las más viejas se borran). */
 const MAX_ENTRIES = 20_000;
 const MAX_TEXT = 1800;
 /** Pocas a la vez: el traductor público limita si se le piden muchas juntas. */
@@ -41,9 +39,6 @@ const CONCURRENCY = 2;
 /** Traducciones en segundo plano encoladas como mucho (catálogo y búsqueda). */
 const WARM_LIMIT = 24;
 const TIMEOUT_MS = 6000;
-const SAVE_DELAY_MS = 4000;
-
-const keyOf = (text: string): string => createHash('sha1').update(text).digest('base64url').slice(0, 20);
 
 export class Translator {
   private readonly memory = new Map<string, string>();
@@ -51,44 +46,46 @@ export class Translator {
   private readonly queue: (() => void)[] = [];
   private readonly blockedUntil = new Map<string, number>();
   private running = 0;
-  private saveTimer: NodeJS.Timeout | null = null;
+  /** Las traducciones guardadas, cargadas una vez al abrir. */
+  private readonly loaded: Promise<void>;
 
-  constructor(private readonly file: string, private readonly request: typeof fetch = pooledFetch) {
-    try {
-      if (existsSync(file)) {
-        const saved = asRecord(JSON.parse(readFileSync(file, 'utf8')) as unknown);
-        for (const [key, value] of Object.entries(saved)) if (typeof value === 'string') this.memory.set(key, value);
-      }
-    } catch {
-      // un archivo roto no impide traducir: se vuelve a armar
-    }
+  constructor(private readonly store: KeyValueStore, private readonly request: typeof fetch = (input, init) => fetch(input, init)) {
+    this.loaded = store.entries().then((entries) => {
+      for (const [key, value] of entries) if (typeof value === 'string') this.memory.set(key, value);
+      if (entries.length > MAX_ENTRIES) void store.trim(MAX_ENTRIES);
+    }, () => undefined);
+  }
+
+  /** Espera a tener cargadas las traducciones guardadas. */
+  ready(): Promise<void> {
+    return this.loaded;
   }
 
   /** La traducción ya guardada, o null (sin esperar a la red). */
   known(text: string): string | null {
-    return text ? this.memory.get(keyOf(text)) ?? null : null;
+    return text ? this.memory.get(text.trim().slice(0, MAX_TEXT)) ?? null : null;
   }
 
   /**
    * Traduce (o devuelve la guardada). Si el traductor no contesta, el texto original. `urgent`: lo
    * que la pantalla está esperando (la ficha abierta) pasa delante de lo que se traduce de fondo.
    */
-  translate(text: string, urgent = false): Promise<string> {
+  async translate(text: string, urgent = false): Promise<string> {
     const clean = text.trim().slice(0, MAX_TEXT);
-    if (!clean || looksSpanish(clean)) return Promise.resolve(text);
-    const key = keyOf(clean);
-    const saved = this.memory.get(key);
-    if (saved) return Promise.resolve(saved);
-    if (!this.available) return Promise.resolve(text);
-    let pending = this.inflight.get(key);
+    if (!clean || looksSpanish(clean)) return text;
+    await this.loaded;
+    const saved = this.memory.get(clean);
+    if (saved) return saved;
+    if (!this.available) return text;
+    let pending = this.inflight.get(clean);
     if (!pending) {
       pending = this.limited(() => this.fetchTranslation(clean), urgent)
         .then((translated) => {
-          if (translated && translated !== clean) this.remember(key, translated);
+          if (translated && translated !== clean) this.remember(clean, translated);
           return translated || text;
         }, () => text)
-        .finally(() => this.inflight.delete(key));
-      this.inflight.set(key, pending);
+        .finally(() => this.inflight.delete(clean));
+      this.inflight.set(clean, pending);
     }
     return pending;
   }
@@ -96,7 +93,7 @@ export class Translator {
   /** Traduce sin esperar el resultado (para ir llenando la memoria en segundo plano). */
   warm(texts: readonly string[]): void {
     // Pocas por vez (medido: pedir ~160 juntas hace que Google conteste 429 un buen rato).
-    const missing = texts.filter((text) => text && !this.known(text) && !this.inflight.has(keyOf(text.trim().slice(0, MAX_TEXT))));
+    const missing = texts.filter((text) => text && !this.known(text) && !this.inflight.has(text.trim().slice(0, MAX_TEXT)));
     for (const text of missing.slice(0, Math.max(0, WARM_LIMIT - this.queue.length))) void this.translate(text);
   }
 
@@ -137,15 +134,9 @@ export class Translator {
     });
   }
 
-  private remember(key: string, value: string): void {
-    if (this.memory.size >= MAX_ENTRIES) this.memory.delete(this.memory.keys().next().value ?? '');
-    this.memory.set(key, value);
-    if (this.saveTimer) return;
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = null;
-      void writeFile(this.file, JSON.stringify(Object.fromEntries(this.memory))).catch(() => undefined);
-    }, SAVE_DELAY_MS);
-    this.saveTimer.unref();
+  private remember(text: string, value: string): void {
+    this.memory.set(text, value);
+    void this.store.set(text, value).catch(() => undefined);
   }
 }
 

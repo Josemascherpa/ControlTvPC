@@ -1,12 +1,17 @@
 import type Hls from 'hls.js';
+import { FramexLibrary } from './library.js';
+import { BrowserStore } from './store.js';
+import { Translator } from './translator.js';
 
 declare global {
   interface Window { Hls?: typeof Hls }
 }
 
-// Pantalla de cine propia (Chromecast): catálogo de la API de FrameX, ficha del título y reproductor
-// HLS/MP4. Todo se maneja con flechas y OK del control, y también con el touchpad (hover + clic).
-// No usa iframes ni carga las webs de los proveedores: sólo las fuentes que entrega la API.
+// El Cine: la única app de la tele (estilo Chromecast). Catálogo de la API de FrameX, ficha del
+// título y reproductor HLS/MP4. Todo se maneja con flechas y OK del control, y también con el
+// touchpad (hover + clic). No usa iframes ni carga las webs de los proveedores: sólo las fuentes
+// que entrega la API. Es autónoma: sólo necesita internet (la notebook no le resuelve nada), así
+// la misma app puede llevarse a otro tele.
 
 type Row = { readonly name: string; readonly items: readonly Contracts.LibraryTitle[] };
 type Type = 'movie' | 'tv';
@@ -154,47 +159,31 @@ function busy(delta: 1 | -1): void {
 }
 
 /**
- * Imágenes del catálogo a través del servicio: las guarda en el disco en WebP y Edge las guarda
- * para siempre (misma dirección = misma imagen). Así no se vuelve a bajar nada que ya se vio.
+ * El catálogo lo consulta la propia app, directo a internet: no depende de la notebook. Lo ya visto
+ * (catálogo, fichas, búsquedas y traducciones) queda guardado en el navegador: se muestra al
+ * instante y se actualiza por detrás sólo si cambió. Las imágenes las guarda la caché del navegador
+ * (TMDB las entrega en WebP y con vencimiento largo).
  */
-function imageUrl(src: string): string {
-  return src.startsWith('https://image.tmdb.org/') ? `/img?u=${encodeURIComponent(src)}` : src;
-}
-
-/**
- * Fichas y temporadas ya vistas, en memoria: volver a abrir una es instantáneo y sin consultas.
- * (El servicio además las guarda en el disco y las actualiza por detrás si cambian.)
- */
-const MEMO_OPS = new Set(['details', 'season']);
-const MEMO_LIMIT = 80;
-const memo = new Map<string, Contracts.LibraryReply>();
+const library = new FramexLibrary(undefined, new Translator(new BrowserStore('traducciones')), new BrowserStore('catalogo'), true);
 
 async function api(op: string, params: Record<string, string> = {}, cancel?: AbortSignal, quiet = false): Promise<Contracts.LibraryReply> {
-  const query = new URLSearchParams({ op, ...params });
-  const memoKey = MEMO_OPS.has(op) ? query.toString() : '';
-  const remembered = memoKey ? memo.get(memoKey) : undefined;
-  if (remembered) return remembered;
-  const reply = await request(query, cancel, quiet);
-  if (memoKey) {
-    if (memo.size >= MEMO_LIMIT) memo.delete(memo.keys().next().value ?? '');
-    memo.set(memoKey, reply);
-  }
-  return reply;
-}
-
-async function request(query: URLSearchParams, cancel: AbortSignal | undefined, quiet: boolean): Promise<Contracts.LibraryReply> {
-  const timeout = AbortSignal.timeout(30_000);
-  const signal = cancel ? AbortSignal.any([cancel, timeout]) : timeout;
   if (!quiet) busy(1);
   try {
-    const response = await fetch(`/api/library?${query.toString()}`, { signal });
-    if (!response.ok) throw new Error('No se pudo consultar el catálogo.');
-    const result = (await response.json()) as Contracts.LibraryReply;
+    const result = await abortable(library.query(new URLSearchParams({ op, ...params })), cancel);
     if (result.error) throw new Error(result.error);
     return result;
   } finally {
     if (!quiet) busy(-1);
   }
+}
+
+/** Una búsqueda vieja (se siguió escribiendo) se descarta apenas se cancela, sin esperar su respuesta. */
+function abortable<T>(task: Promise<T>, cancel: AbortSignal | undefined): Promise<T> {
+  if (!cancel) return task;
+  if (cancel.aborted) return Promise.reject(new DOMException('Cancelada', 'AbortError'));
+  return Promise.race([task, new Promise<never>((_, reject) => {
+    cancel.addEventListener('abort', () => { reject(new DOMException('Cancelada', 'AbortError')); }, { once: true });
+  })]);
 }
 
 function metaText(item: Contracts.LibraryTitle, genres: readonly string[] = []): string {
@@ -364,7 +353,7 @@ async function spanishOverview(item: Contracts.LibraryTitle, key: string): Promi
 
 async function swapHeroImage(src: string): Promise<void> {
   const front = heroImages[heroFront];
-  const url = src ? new URL(imageUrl(src), location.href).href : '';
+  const url = src ? new URL(src, location.href).href : '';
   if (!url || front.src === url) return;
   const next = heroFront === 0 ? 1 : 0;
   const incoming = heroImages[next];
@@ -588,7 +577,7 @@ function makeCard(item: Contracts.LibraryTitle, progress?: ProgressEntry): HTMLB
   wrap.append(shimmer, poster);
   const art = item.backdrop || item.poster;
   if (art) {
-    poster.dataset['src'] = imageUrl(art);
+    poster.dataset['src'] = art;
   } else {
     fallback();
   }
@@ -932,7 +921,7 @@ function renderEpisodes(): void {
     still.decoding = 'async';
     still.width = 132;
     still.height = 74;
-    if (episode.still) still.src = imageUrl(episode.still);
+    if (episode.still) still.src = episode.still;
     const body = document.createElement('span');
     body.className = 'ep-body';
     const title = document.createElement('span');
@@ -1063,7 +1052,7 @@ async function openDetails(
   detailBody.scrollTop = 0;
   const image = item.backdrop || item.poster;
   if (image) {
-    detailImage.src = imageUrl(image);
+    detailImage.src = image;
     detailImage.hidden = false;
   } else {
     detailImage.removeAttribute('src');
@@ -1153,7 +1142,7 @@ function loadHls(): Promise<typeof Hls> {
   if (window.Hls) return Promise.resolve(window.Hls);
   loadingHls ??= new Promise<typeof Hls>((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/vendor/hls.js';
+    script.src = 'vendor/hls.js'; // parte de la app (se copia al compilar)
     script.onload = () => {
       if (window.Hls) resolve(window.Hls);
       else {
@@ -1195,6 +1184,7 @@ function applySubtitleMode(): void {
     track.mode = index === subtitleIndex ? 'hidden' : 'disabled';
     if (index === subtitleIndex) selected = track;
   }
+  if (subtitleIndex >= 0) loadSubtitle(subtitleIndex);
   watchCues(selected);
 }
 
@@ -1276,25 +1266,47 @@ function renderCues(): void {
 }
 
 /**
- * Los subtítulos de la fuente (el servicio sólo manda los que están en español, primero los latinos).
+ * Los subtítulos de la fuente (la biblioteca sólo deja los que están en español, primero los latinos).
  * Se activa el primero, salvo que el audio ya sea en español (ahí quedan para el botón Subtítulos).
- * Antes se buscaba el idioma "es…" y, si venía como "spanish" o "spa", no se mostraba ninguno.
+ * Cada pista se baja recién cuando se elige (ver loadSubtitle).
  */
 function addTracks(source: Contracts.LibrarySource): void {
   for (const track of [...video.querySelectorAll('track')]) track.remove();
   const spanishAudio = isSpanish(source.audio ?? '') || (source.audioTracks ?? []).some((track) => isSpanish(track.lang) || isSpanish(track.label));
   const preferred = currentSubtitles.length > 0 && !spanishAudio ? 0 : -1;
-  currentSubtitles.forEach((subtitle, index) => {
+  currentSubtitles.forEach((subtitle) => {
     const track = document.createElement('track');
     track.kind = 'subtitles';
     track.label = subtitle.label || subtitle.lang.toUpperCase();
     track.srclang = subtitle.lang;
-    track.src = `/api/subtitle?url=${encodeURIComponent(subtitle.url)}`;
-    if (index === preferred) track.default = true;
     video.append(track);
   });
   subtitleIndex = preferred;
   window.setTimeout(applySubtitleMode, 0);
+}
+
+/** Subtítulos ya bajados (dirección original → copia WebVTT en memoria). */
+const subtitleFiles = new Map<string, Promise<string | null>>();
+
+/**
+ * Baja el subtítulo elegido (muchos vienen en SRT: la biblioteca los pasa a WebVTT) y se lo da al
+ * video desde la memoria. Así no hace falta ningún servidor intermedio.
+ */
+function loadSubtitle(index: number): void {
+  const subtitle = currentSubtitles[index];
+  const element = video.querySelectorAll('track')[index];
+  if (!subtitle || !element || element.src) return;
+  let file = subtitleFiles.get(subtitle.url);
+  if (!file) {
+    file = library.subtitle(subtitle.url)
+      .then((text) => (text ? URL.createObjectURL(new Blob([text], { type: 'text/vtt' })) : null))
+      .catch(() => null);
+    subtitleFiles.set(subtitle.url, file);
+  }
+  void file.then((url) => {
+    if (url && element.isConnected) element.src = url;
+    else if (!url && element.isConnected && index === subtitleIndex) toast('No se pudieron cargar esos subtítulos.');
+  });
 }
 
 function playVideo(): void {
@@ -1679,8 +1691,20 @@ function back(): boolean {
     void loadHome();
     return true;
   }
-  location.assign('/');
-  return true;
+  // Ya en el catálogo: vuelve al principio (el Cine es la única app, no hay a dónde salir).
+  if (document.activeElement !== heroPlay) {
+    focusInitial();
+    return true;
+  }
+  return false;
+}
+
+/** Al principio del catálogo, cierre lo que esté abierto (botón Inicio o el logo "Cine"). */
+function goToStart(): void {
+  if (!player.hidden) stopPlayer();
+  if (!detailPanel.hidden) closeDetails();
+  if (searchMode) void loadHome();
+  else focusInitial();
 }
 
 addEventListener('keydown', (event) => {
@@ -1877,5 +1901,14 @@ window.__controlTvPrepareText = (): boolean => {
   search.select();
   return true;
 };
+/** Botón Inicio del control: vuelve al principio del catálogo (sin recargar la app). */
+window.__controlTvHome = (): boolean => {
+  goToStart();
+  return true;
+};
+brand.addEventListener('click', (event) => {
+  event.preventDefault();
+  goToStart();
+});
 
 void loadHome();

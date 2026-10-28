@@ -1,23 +1,25 @@
-import { existsSync, readFileSync } from 'fs';
-import { mkdir, writeFile } from 'fs/promises';
-import { dirname } from 'path';
-import type { MediaLibrary } from '../../domain/media-library';
-import { asArray, asNullableNumber, asRecord, asString } from '../storage/json';
-import { pooledFetch } from './http-pool';
-import type { Translator } from './translator';
+import { asArray, asNullableNumber, asRecord, asString } from '../../shared/json.js';
+import type { KeyValueStore } from './store.js';
+import type { Translator } from './translator.js';
 
 /** Espera una traducción como mucho un rato: si tarda, se usa el texto original (no se demora la ficha). */
 function capped(task: Promise<string>, fallback: string, ms = 2500): Promise<string> {
-  return Promise.race([task, new Promise<string>((resolve) => { setTimeout(() => { resolve(fallback); }, ms).unref(); })]);
+  return Promise.race([task, new Promise<string>((resolve) => { setTimeout(() => { resolve(fallback); }, ms); })]);
 }
 
 // Catálogo propio. La API pública de FrameX entrega metadatos (TMDB) y, por título, la lista de
 // servidores con una fuente HLS o MP4. Nunca se ejecuta JavaScript de terceros ni se reenvían URLs
 // arbitrarias: todo lo que sale de acá ya está validado.
+//
+// Corre adentro del Cine (en el navegador) y consulta internet directo: no depende de la notebook,
+// así la misma app sirve en cualquier tele con internet. Todas estas APIs aceptan pedidos desde una
+// página (CORS), medido una por una.
 const ORIGIN = 'https://api.framextv.xyz';
 const MAX_BYTES = 3 * 1024 * 1024;
 const SUBTITLE_BYTES = 512 * 1024;
 const CACHE_LIMIT = 150;
+/** Catálogo, fichas y búsquedas guardados en el navegador como mucho (los más viejos se borran). */
+const STORE_LIMIT = 400;
 const MAX_PENDING = 4;
 const HOME_TTL = 5 * 60_000;
 const DETAIL_TTL = 10 * 60_000;
@@ -207,7 +209,7 @@ function providerIds(value: unknown): string[] {
 }
 
 /** Adaptador de la API usada por la web pública de FrameX. */
-export class FramexLibrary implements MediaLibrary {
+export class FramexLibrary {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly pending = new Map<string, Promise<Contracts.LibraryReply>>();
   /** Fuentes ya encontradas (por título/episodio), para reproducir al instante. */
@@ -215,17 +217,17 @@ export class FramexLibrary implements MediaLibrary {
   private readonly resolving = new Map<string, Promise<Contracts.LibraryReply>>();
 
   private lastUse = 0;
-  private warmTimer: NodeJS.Timeout | null = null;
-
-  private saveTimer: NodeJS.Timeout | null = null;
+  private warmTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
-    private readonly request: typeof fetch = pooledFetch,
+    private readonly request: typeof fetch = (input, init) => fetch(input, init),
     private readonly translator: Translator | null = null,
-    /** Archivo donde queda el catálogo entre arranques (null: sólo en memoria). */
-    private readonly store: string | null = null,
+    /** Donde queda el catálogo entre usos (null: sólo en memoria). */
+    private readonly store: KeyValueStore | null = null,
+    /** Mantener abierta la conexión con la API mientras se usa (en las pruebas, no). */
+    private readonly warm = false,
   ) {
-    this.restore();
+    void store?.trim(STORE_LIMIT).catch(() => undefined);
   }
 
   /**
@@ -283,11 +285,10 @@ export class FramexLibrary implements MediaLibrary {
         this.remember(`${ORIGIN}/api/providers`, PROVIDER_TTL, this.providers(asRecord(raw)));
       }, () => undefined);
     }, WARM_EVERY_MS);
-    this.warmTimer.unref();
   }
 
   async query(params: URLSearchParams): Promise<Contracts.LibraryReply> {
-    if (this.request === pooledFetch) this.keepWarm();
+    if (this.warm) this.keepWarm();
     const op = params.get('op') ?? 'home';
     if (op === 'resolve') return this.resolve(params);
     if (op === 'stream') {
@@ -338,8 +339,8 @@ export class FramexLibrary implements MediaLibrary {
   }
 
   /**
-   * Trae subtítulos por el servidor local: el reproductor no depende de CORS ni de dominios ajenos.
-   * Sólo se aceptan los hosts de subtítulos que ya usa la API.
+   * Trae un subtítulo como WebVTT (el reproductor lo carga desde la memoria). Sólo de los hosts de
+   * subtítulos que ya usa la API, por HTTPS.
    */
   async subtitle(value: string): Promise<string | null> {
     let url: URL;
@@ -406,7 +407,7 @@ export class FramexLibrary implements MediaLibrary {
   private async cached(
     key: string, ttl: number, load: () => Promise<Contracts.LibraryReply>,
   ): Promise<Contracts.LibraryReply> {
-    const hit = this.cache.get(key);
+    const hit = this.cache.get(key) ?? await this.stored(key);
     if (hit && hit.until > Date.now()) {
       this.cache.delete(key);
       this.cache.set(key, hit);
@@ -438,35 +439,21 @@ export class FramexLibrary implements MediaLibrary {
     this.cache.delete(key);
     if (this.cache.size >= CACHE_LIMIT) this.cache.delete(this.cache.keys().next().value ?? '');
     this.cache.set(key, { value, until: Date.now() + ttl });
-    if (ttl > 0) this.saveSoon();
+    if (ttl > 0) void this.store?.set(key, value).catch(() => undefined);
   }
 
-  /** Lo guardado en el disco de la vez anterior (vencido: se muestra y se actualiza por detrás). */
-  private restore(): void {
-    if (!this.store || !existsSync(this.store)) return;
+  /** Lo guardado en el navegador de la vez anterior: se muestra y se actualiza por detrás. */
+  private async stored(key: string): Promise<CacheEntry | undefined> {
+    if (!this.store) return undefined;
     try {
-      for (const entry of asArray(JSON.parse(readFileSync(this.store, 'utf8')) as unknown)) {
-        const [key, value] = asArray(entry);
-        if (typeof key === 'string' && value && typeof value === 'object') {
-          this.cache.set(key, { until: 0, value: value as Contracts.LibraryReply });
-        }
-      }
+      const value = await this.store.get(key);
+      if (!value || typeof value !== 'object') return undefined;
+      const entry = { until: 0, value: value as Contracts.LibraryReply };
+      this.cache.set(key, entry);
+      return entry;
     } catch {
-      // un archivo roto sólo significa empezar sin catálogo guardado
+      return undefined;
     }
-  }
-
-  private saveSoon(): void {
-    const store = this.store;
-    if (!store || this.saveTimer) return;
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = null;
-      const entries = [...this.cache].map(([key, entry]) => [key, entry.value]);
-      void mkdir(dirname(store), { recursive: true })
-        .then(() => writeFile(store, JSON.stringify(entries)))
-        .catch(() => undefined);
-    }, 3000);
-    this.saveTimer.unref();
   }
 
   private async load(plan: Planned): Promise<Contracts.LibraryReply> {
@@ -506,7 +493,8 @@ export class FramexLibrary implements MediaLibrary {
     } finally {
       await reader.cancel().catch(() => undefined);
     }
-    return Buffer.concat(chunks).toString('utf8');
+    const decoder = new TextDecoder();
+    return chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join('') + decoder.decode();
   }
 
   // ---------- Armado de la respuesta ----------
@@ -701,7 +689,7 @@ export class FramexLibrary implements MediaLibrary {
       let finished = false;
       let pendingCount = candidates.length;
       const failures: (Contracts.LibraryReply | null)[] = [];
-      const timers: NodeJS.Timeout[] = [];
+      const timers: ReturnType<typeof setTimeout>[] = [];
       const finish = (reply: Contracts.LibraryReply): void => {
         if (finished) return;
         finished = true;

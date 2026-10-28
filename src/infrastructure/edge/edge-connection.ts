@@ -4,7 +4,6 @@ import { basename, join } from 'path';
 import type { Logger } from '../../domain/ports';
 import type { GpuChoice } from '../../domain/settings';
 import { Signal } from '../../domain/signal';
-import { AD_BLOCK_PATTERNS } from './ad-block';
 import { CdpClient } from './cdp-client';
 import type { CdpMethod, CdpParams, CdpResult, TargetInfo } from './cdp-protocol';
 import { applyEdgePreferences, LANGUAGE_FLAGS } from './edge-preferences';
@@ -81,15 +80,10 @@ export class EdgeConnection {
   private checkingHealth = false;
   private healthFailures = 0;
   private lastHangRestart = 0;
-  private defaultUserAgent = '';
   private readonly inject: string;
 
   constructor(private readonly options: EdgeOptions, private readonly log: Logger) {
     this.inject = readFileSync(options.injectScript, 'utf8');
-  }
-
-  get userAgent(): string {
-    return this.defaultUserAgent;
   }
 
   /** Arranca el vigilante: si Edge se cierra o se cuelga, lo vuelve a abrir. */
@@ -221,7 +215,6 @@ export class EdgeConnection {
       }
       if (!version) throw new Error('Edge no respondió');
     }
-    this.defaultUserAgent = version.userAgent.replace('HeadlessChrome', 'Chrome');
 
     const client = await CdpClient.connect(version.webSocketDebuggerUrl);
     const previousClient = this.client;
@@ -238,15 +231,8 @@ export class EdgeConnection {
     });
     client.on('Target.targetCreated', ({ targetInfo }) => { this.onTarget(targetInfo); });
     client.on('Target.targetInfoChanged', ({ targetInfo }) => { this.onTarget(targetInfo); });
-    client.on('Target.attachedToTarget', ({ sessionId, targetInfo, waitingForDebugger }) => {
-      void this.prepareFrame(client, sessionId, targetInfo, waitingForDebugger);
-    });
     client.on('Target.targetDestroyed', ({ targetId }) => {
       if (targetId === this.targetId) this.sessionId = null;
-    });
-    // Un pedido a una red de publicidad quedó frenado: se cancela (la página sigue como si no existiera).
-    client.on('Fetch.requestPaused', ({ requestId }, sessionId) => {
-      client.send('Fetch.failRequest', { requestId, errorReason: 'BlockedByClient' }, sessionId ?? undefined).catch(() => undefined);
     });
     await client.send('Target.setDiscoverTargets', { discover: true });
 
@@ -256,8 +242,8 @@ export class EdgeConnection {
       ?? pages.find((t) => t.url.startsWith(this.options.homeUrl)) ?? pages[0];
     const targetId = page?.targetId ?? (await client.send('Target.createTarget', { url: this.options.homeUrl })).targetId;
     await this.attach(targetId);
-    // Reconectar el control no debe interrumpir la película ni el inicio de sesión.
-    // Una pestaña nueva ya se crea con homeUrl; una existente conserva su documento.
+    // Reconectar el control no debe interrumpir la película.
+    // Una pestaña nueva ya se crea con el Cine; una existente conserva su documento.
     this.urlChanged.emit(page?.url ?? this.options.homeUrl);
     const { processInfo } = await client.send('SystemInfo.getProcessInfo', {});
     const browser = processInfo.find((p) => p.type === 'browser');
@@ -298,35 +284,10 @@ export class EdgeConnection {
     this.targetId = targetId;
     this.sessionId = sessionId;
     await this.page('Page.enable', {});
-    // Bloqueador de anuncios: Edge frena los pedidos a redes de publicidad y acá se cancelan.
-    await this.page('Fetch.enable', { patterns: AD_BLOCK_PATTERNS });
-    // inject.js corre en cada página que se abra: navegación con flechas, avisos y volumen.
+    // inject.js: lo que la notebook le agrega al Cine (cursor, avisos y volumen).
     await this.page('Page.addScriptToEvaluateOnNewDocument', { source: this.inject });
     await this.page('Runtime.evaluate', { expression: this.inject }).catch(() => undefined);
-    // Los iframes de otro sitio (reproductores, videos de YouTube metidos en otras páginas, anuncios)
-    // corren en procesos aparte: se los engancha apenas se crean (ver prepareFrame).
-    await this.page('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
     this.attached.emit();
-  }
-
-  /**
-   * Un iframe de otro sitio recién creado (frenado hasta acá): le llegan el bloqueador de anuncios y
-   * el script (que adentro de un iframe sólo hace que YouTube mande H.264, decodificado por la placa
-   * de video). Nunca "Runtime.enable": hay sitios que lo detectan y se van a una página en blanco.
-   */
-  private async prepareFrame(client: CdpClient, sessionId: string, info: TargetInfo, waiting: boolean): Promise<void> {
-    try {
-      if (info.type === 'iframe') {
-        await client.send('Page.enable', {}, sessionId);
-        await client.send('Fetch.enable', { patterns: AD_BLOCK_PATTERNS }, sessionId);
-        await client.send('Page.addScriptToEvaluateOnNewDocument', { source: this.inject }, sessionId);
-        await client.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId);
-      }
-    } catch {
-      // un iframe que se cerró enseguida (anuncios): no importa
-    } finally {
-      if (waiting) await client.send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => undefined);
-    }
   }
 
   private onTarget(info: TargetInfo): void {
@@ -334,8 +295,7 @@ export class EdgeConnection {
       this.urlChanged.emit(info.url);
       return;
     }
-    // Una ventana nueva abierta por una página: la cerramos siempre; si se abre o no en la tele lo
-    // decide la pantalla (las de propaganda se descartan).
+    // Una ventana nueva: en la tele no se abren (el Cine no abre ventanas).
     if (info.type !== 'page' || !info.openerId || !info.url || info.url === 'about:blank') return;
     this.client?.send('Target.closeTarget', { targetId: info.targetId }).catch(() => undefined);
     this.popupRequested.emit(info.url);

@@ -1,6 +1,8 @@
-const { test } = require('node:test');
+const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
-const { FramexLibrary } = require('../dist/infrastructure/media/framex-library');
+// La biblioteca es del Cine (corre en el navegador): se prueba el mismo módulo que carga la app.
+let FramexLibrary;
+before(async () => { ({ FramexLibrary } = await import('../ui/js/web/cine/library.js')); });
 const query = (value) => new URLSearchParams(value);
 const tmdb = (size, file) => `https://image.tmdb.org/t/p/${size}/${file}.jpg`;
 const details = (originalLanguage) => Response.json({

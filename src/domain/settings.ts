@@ -6,12 +6,6 @@ export interface PairedPhone {
   readonly createdAt: string;
 }
 
-export interface Location {
-  readonly city: string;
-  readonly lat: number;
-  readonly lon: number;
-}
-
 /** Con qué placa dibuja Edge: la Intel (sale directo por el HDMI) o la GeForce (copia cada cuadro a la Intel). */
 export type GpuChoice = 'integrated' | 'dedicated';
 
@@ -21,12 +15,8 @@ export interface Settings {
   readonly phones: readonly PairedPhone[];
   /** Si es false, sólo entran los celulares que ya se conectaron alguna vez. */
   readonly allowNewPhones: boolean;
-  /** null = automática según la IP. */
-  readonly location: Location | null;
   readonly pointerSpeed: number;
-  /** Minutos sin usar el inicio hasta el modo ambiente. 0 = nunca. */
-  readonly ambientMinutes: number;
-  /** Horas sin usar nada (estando en el inicio) hasta apagar la imagen. 0 = nunca. */
+  /** Horas sin usar nada (y sin nada reproduciéndose) hasta apagar la imagen. 0 = nunca. */
   readonly autoOffHours: number;
   /** Cambiar solo entre los planes de energía "Máximo" (en uso) y "Ahorro" (sin uso). */
   readonly autoPowerPlans: boolean;
@@ -42,9 +32,7 @@ export interface Settings {
   readonly tvBrand: string | null;
   /** Nombre del tele del HDMI en la red (ej. "[LG] webOS TV UJ6580"). */
   readonly tvName: string | null;
-  /** Las apps del inicio, en orden. null = las de fábrica. */
-  readonly homeApps: readonly string[] | null;
-  /** La placa de video con la que dibuja la tele. */
+  /** La placa de video con la que dibuja la tele (se cambia en config.json; Edge se reabre al reiniciar). */
   readonly gpu: GpuChoice;
 }
 
@@ -52,9 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {
   name: 'Notebook TV',
   phones: [],
   allowNewPhones: true,
-  location: null,
   pointerSpeed: 1,
-  ambientMinutes: 3,
   autoOffHours: 4,
   autoPowerPlans: true,
   idleMinutes: 10,
@@ -63,6 +49,5 @@ export const DEFAULT_SETTINGS: Settings = {
   tvMac: null,
   tvBrand: null,
   tvName: null,
-  homeApps: null,
   gpu: 'integrated',
 };

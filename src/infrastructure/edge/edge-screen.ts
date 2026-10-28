@@ -1,7 +1,5 @@
-import type { TvApp } from '../../domain/apps';
-import { WEB_APP } from '../../domain/apps';
-import type { AppCatalog, Logger, PageKey, TvScreen } from '../../domain/ports';
-import { googleSearchQuery, sameSite, toTvUrl } from '../../domain/urls';
+import type { Logger, PageKey, TvScreen } from '../../domain/ports';
+import { googleSearchQuery } from '../../domain/urls';
 import type { KeyEventParams } from './cdp-protocol';
 import type { EdgeConnection } from './edge-connection';
 
@@ -25,38 +23,25 @@ const KEYS: Readonly<Record<PageKey, KeyDefinition>> = {
 };
 
 /**
- * La tele hecha con Edge: el inicio es una página local y cada app se abre en la misma ventana.
- * Sabe en qué app está para que "Atrás" haga lo correcto en cada una.
+ * La tele hecha con Edge: una sola página, el Cine. Lo que pide el control (Atrás, Inicio, buscar)
+ * se lo pregunta al Cine por sus funciones `window.__controlTv…`; no hay otras apps ni historial.
  */
 export class EdgeScreen implements TvScreen {
-  private current: TvApp | null = null; // null = estamos en el inicio
-  private pageUrl = '';
-
   constructor(
     private readonly edge: EdgeConnection,
-    private readonly apps: AppCatalog,
     private readonly homeUrl: string,
     private readonly log: Logger,
   ) {
     edge.urlChanged.subscribe((url) => {
-      this.pageUrl = url;
-      this.syncApp(url);
+      // Sólo el Cine: si algo llevara a otra página (un enlace, un error), se vuelve a él.
+      if (!url.startsWith(homeUrl) && !url.startsWith('about:')) {
+        this.log.info('Página ajena, se vuelve al Cine:', url.slice(0, 80));
+        void this.reload().catch(() => undefined);
+      }
     });
     edge.popupRequested.subscribe((url) => {
-      // Una ventana nueva sólo se abre si es del mismo sitio o de una app conocida: las de otros
-      // sitios casi siempre son propaganda (típico en las páginas de películas online).
-      if (!sameSite(url, this.pageUrl) && !this.apps.forUrl(url)) {
-        this.log.info('Ventana emergente bloqueada:', new URL(url).hostname);
-        return;
-      }
-      this.openUrl(url).catch((error: unknown) => {
-        this.log.warn('No se pudo abrir la ventana nueva:', error);
-      });
+      this.log.info('Ventana emergente bloqueada:', url.slice(0, 80));
     });
-  }
-
-  get atHome(): boolean {
-    return this.current === null;
   }
 
   async show(): Promise<void> {
@@ -64,65 +49,28 @@ export class EdgeScreen implements TvScreen {
     await this.edge.bringToFront();
   }
 
+  /** Al principio del catálogo, sin recargar (se conserva lo cargado). Si el Cine no contesta, se recarga. */
   async goHome(): Promise<void> {
     await this.edge.ensure();
-    await this.setUserAgent(null);
-    await this.edge.page('Page.navigate', { url: this.homeUrl });
-    this.current = null;
-  }
-
-  async openApp(app: TvApp): Promise<void> {
-    await this.navigate(app.url, app, app.userAgent);
+    if (!(await this.ask('window.__controlTvHome?.() === true'))) await this.reload();
   }
 
   async openUrl(rawUrl: string): Promise<void> {
-    // "Buscar" en el celular manda una búsqueda de Google. Si la página abierta tiene buscador propio
-    // (el Cine), se busca ahí mismo en vez de salir a Google.
+    // "Buscar" en el celular manda una búsqueda de Google: se busca en el Cine.
     const query = googleSearchQuery(rawUrl);
-    if (query && !this.atHome && (await this.searchInPage(query))) return;
-    const url = toTvUrl(rawUrl);
-    const app = this.apps.forUrl(url);
-    // El "disfraz" de Smart TV sólo para la dirección principal de la app (ej. youtube.com/tv).
-    const userAgent = app && url.startsWith(app.url.split('#')[0] ?? app.url) ? app.userAgent : null;
-    await this.navigate(url, app ?? WEB_APP, userAgent);
-  }
-
-  /** true si la página abierta buscó por su cuenta (tiene `window.__controlTvSearch`). */
-  private async searchInPage(query: string): Promise<boolean> {
-    if (!this.edge.isReady) return false;
-    try {
-      const { result } = await this.edge.page('Runtime.evaluate', {
-        expression: `window.__controlTvSearch ? window.__controlTvSearch(${JSON.stringify(query)}) : false`,
-        returnByValue: true,
-      });
-      return result.value === true;
-    } catch {
-      return false;
+    if (!query) {
+      this.log.info('Dirección del celular ignorada (sólo se usa el Cine):', rawUrl.slice(0, 80));
+      return;
     }
+    await this.edge.ensure();
+    await this.ask(`window.__controlTvSearch?.(${JSON.stringify(query)}) === true`);
+    await this.edge.bringToFront();
   }
 
-  /** "Atrás": cierra lo abierto, vuelve a la página anterior o, si no hay, al inicio. */
+  /** "Atrás": el Cine cierra lo que tenga abierto (reproductor, ficha, búsqueda). */
   async back(): Promise<void> {
-    if (this.atHome) return this.pressKey('ESCAPE'); // el inicio cierra el panel que esté abierto
-    // Primero lo que esté encima: video a pantalla completa, o la ficha abierta del sitio (modo TV).
-    const { result } = await this.edge.page('Runtime.evaluate', {
-      expression: 'document.fullscreenElement ? (document.exitFullscreen(), true) : (window.__controlTvBack ? window.__controlTvBack() : false)',
-      returnByValue: true,
-    });
-    if (result.value === true) return undefined;
-    if (result.value === 'escape') return this.pressKey('ESCAPE');
-    if (this.current?.back === 'escape') return this.pressKey('ESCAPE');
-
-    const { currentIndex, entries } = await this.edge.page('Page.getNavigationHistory', {});
-    const previous = entries[currentIndex - 1];
-    if (previous && !previous.url.startsWith(this.homeUrl) && !previous.url.startsWith('about:')) {
-      const app = this.apps.forUrl(previous.url);
-      const userAgent = app && previous.url.startsWith(app.url.split('#')[0] ?? app.url) ? app.userAgent : null;
-      await this.setUserAgent(userAgent);
-      await this.edge.page('Page.navigateToHistoryEntry', { entryId: previous.id });
-      return undefined;
-    }
-    return this.goHome();
+    if (await this.ask('document.fullscreenElement ? (document.exitFullscreen(), true) : window.__controlTvBack?.() === true')) return;
+    await this.pressKey('ESCAPE');
   }
 
   async pressKey(name: PageKey): Promise<void> {
@@ -138,12 +86,8 @@ export class EdgeScreen implements TvScreen {
 
   async insertText(text: string): Promise<void> {
     await this.edge.ensure();
-    const { result } = await this.edge.page('Runtime.evaluate', {
-      expression: 'window.__controlTvPrepareText ? window.__controlTvPrepareText() : true',
-      returnByValue: true,
-      awaitPromise: true,
-    });
-    if (result.value !== true) return;
+    // El Cine pone el foco en su buscador; si no puede (hay un video o una ficha), no se escribe nada.
+    if (!(await this.ask('window.__controlTvPrepareText?.() === true'))) return;
     await this.edge.page('Input.insertText', { text });
   }
 
@@ -151,38 +95,26 @@ export class EdgeScreen implements TvScreen {
     return this.edge.closeWindow();
   }
 
-  async togglePlayback(): Promise<boolean> {
-    const { result } = await this.edge.page('Runtime.evaluate', {
-      expression: 'window.__controlTvTogglePlayback?.() === true', returnByValue: true,
-    });
-    return result.value === true;
+  togglePlayback(): Promise<boolean> {
+    return this.ask('window.__controlTvTogglePlayback?.() === true');
   }
 
   restart(): Promise<void> {
     return this.edge.restart();
   }
 
-  private async navigate(url: string, app: TvApp, userAgent: string | null): Promise<void> {
-    await this.edge.ensure();
-    await this.setUserAgent(userAgent);
-    await this.edge.page('Page.navigate', { url });
-    this.current = app;
-    await this.edge.bringToFront();
+  private async reload(): Promise<void> {
+    await this.edge.page('Page.navigate', { url: this.homeUrl });
   }
 
-  /**
-   * El "disfraz" de Smart TV (YouTube) o ninguno. Para volver a lo normal se QUITA el disfraz (texto
-   * vacío): si en cambio se pone el texto normal, Edge deja de mandar sus datos de identificación
-   * (marca, plataforma, versiones) y los sitios ven un dispositivo distinto (medido: un sitio de
-   * streaming cerraba la sesión por eso cada vez que se volvía a entrar).
-   */
-  private async setUserAgent(userAgent: string | null): Promise<void> {
-    await this.edge.page('Network.setUserAgentOverride', { userAgent: userAgent ?? '' });
-  }
-
-  // Si la persona navega con el cursor a otra página, actualizamos en qué app estamos.
-  private syncApp(url: string): void {
-    if (url === this.homeUrl || url.startsWith(`${this.homeUrl}?`) || url.startsWith(`${this.homeUrl}#`)) this.current = null;
-    else if (!url.startsWith('about:')) this.current = this.apps.forUrl(url) ?? WEB_APP;
+  /** Evalúa una expresión en el Cine; true sólo si contestó true. */
+  private async ask(expression: string): Promise<boolean> {
+    if (!this.edge.isReady) return false;
+    try {
+      const { result } = await this.edge.page('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+      return result.value === true;
+    } catch {
+      return false;
+    }
   }
 }

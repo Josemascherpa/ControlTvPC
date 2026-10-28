@@ -1,5 +1,5 @@
 {
-  // Servicio de la notebook (Node). Estricto al máximo: sin any implícitos, índices que pueden no
+  // Servicio de la notebook (Node). Compila también shared/ (lo comparte con el Cine). Estricto al máximo: sin any implícitos, índices que pueden no
   // existir, retornos y casos de switch completos.
   "compilerOptions": {
     "target": "ES2022",
@@ -7,7 +7,7 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "esModuleInterop": true,
-    "rootDir": "src",
+    "rootDir": ".",
     "outDir": "dist",
     "types": ["node"],
     "strict": true,
@@ -23,5 +23,5 @@
     "skipLibCheck": true,
     "sourceMap": true
   },
-  "include": ["src/**/*.ts", "shared/**/*.d.ts"]
+  "include": ["src/**/*.ts", "shared/**/*.ts"]
 }

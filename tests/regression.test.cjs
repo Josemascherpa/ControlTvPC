@@ -1,46 +1,72 @@
 // Node test runner: prueba contratos de comportamiento sin tocar el escritorio ni cuentas reales.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { ScreenCommandQueue } = require('../dist/application/screen-command-queue');
-const { EdgeScreen } = require('../dist/infrastructure/edge/edge-screen');
-const { Signal } = require('../dist/domain/signal');
+const { ScreenCommandQueue } = require('../dist/src/application/screen-command-queue');
+const { EdgeScreen } = require('../dist/src/infrastructure/edge/edge-screen');
+const { Signal } = require('../dist/src/domain/signal');
 const tick = () => new Promise(resolve => setImmediate(resolve));
+const quiet = { info() {}, warn() {} };
+const fakeEdge = (page) => ({ urlChanged: new Signal(), popupRequested: new Signal(), isReady: true, ensure: async () => {}, bringToFront: async () => {}, page });
 
-test('panel abierto recibe Escape real y no navegación por historial', async () => {
+test('Atrás: si el Cine no tiene nada abierto, recibe Escape real (no hay historial)', async () => {
   const calls = [];
-  const edge = { urlChanged: new Signal(), popupRequested: new Signal(), page: async (method, params) => {
+  const edge = fakeEdge(async (method, params) => {
     calls.push([method, params]);
-    return { result: { value: 'escape' } };
-  } };
-  const screen = new EdgeScreen(edge, { forUrl: () => undefined }, 'http://127.0.0.1:8001/', {});
-  edge.urlChanged.emit('https://example.com/');
+    return { result: { value: false } };
+  });
+  const screen = new EdgeScreen(edge, 'http://127.0.0.1:8001/', quiet);
   await screen.back();
-  assert.equal(calls.some(([m]) => m === 'Page.getNavigationHistory'), false);
-  assert.deepEqual(calls.filter(([m]) => m === 'Input.dispatchKeyEvent').map(([,p]) => [p.type,p.key]), [['rawKeyDown','Escape'],['keyUp','Escape']]);
+  assert.ok(calls[0][1].expression.includes('__controlTvBack'), 'Primero le pregunta al Cine');
+  assert.deepEqual(calls.filter(([m]) => m === 'Input.dispatchKeyEvent').map(([, p]) => [p.type, p.key]), [['rawKeyDown', 'Escape'], ['keyUp', 'Escape']]);
+});
+
+test('Atrás: si el Cine cerró algo (ficha, video), no se manda nada más', async () => {
+  const calls = [];
+  const screen = new EdgeScreen(fakeEdge(async (method) => { calls.push(method); return { result: { value: true } }; }), 'http://127.0.0.1:8001/', quiet);
+  await screen.back();
+  assert.deepEqual(calls, ['Runtime.evaluate']);
 });
 
 test('texto sin campo confirmado no se envía al navegador', async () => {
   const calls = [];
-  const edge = { urlChanged: new Signal(), popupRequested: new Signal(), ensure: async () => {}, page: async (method) => {
-    calls.push(method); return { result: { value: false } };
-  } };
-  const screen = new EdgeScreen(edge, {}, '', {});
+  const screen = new EdgeScreen(fakeEdge(async (method) => { calls.push(method); return { result: { value: false } }; }), '', quiet);
   await screen.insertText('texto de prueba');
   assert.deepEqual(calls, ['Runtime.evaluate']);
 });
 
-test('fallo al cambiar identidad impide navegar con la identidad de otra plataforma', async () => {
+test('Inicio: el Cine vuelve al principio sin recargar; si no contesta, se recarga', async () => {
+  for (const answers of [true, false]) {
+    const calls = [];
+    const screen = new EdgeScreen(fakeEdge(async (method, params) => { calls.push([method, params]); return { result: { value: answers } }; }), 'http://127.0.0.1:8001/', quiet);
+    await screen.goHome();
+    assert.ok(calls[0][1].expression.includes('__controlTvHome'));
+    assert.deepEqual(calls.filter(([m]) => m === 'Page.navigate').map(([, p]) => p.url), answers ? [] : ['http://127.0.0.1:8001/']);
+  }
+});
+
+test('sólo el Cine: si algo lleva a otra página, se vuelve al Cine', async () => {
   const calls = [];
-  const edge = { urlChanged: new Signal(), popupRequested: new Signal(), ensure: async () => {}, page: async (method) => {
-    calls.push(method); throw new Error('conexión interrumpida');
-  } };
-  const screen = new EdgeScreen(edge, {}, '', {});
-  await assert.rejects(screen.openApp({ url: 'https://example.com/browse', userAgent: null }), /interrumpida/);
-  assert.deepEqual(calls, ['Network.setUserAgentOverride']);
+  const edge = fakeEdge(async (method, params) => { calls.push([method, params]); return {}; });
+  new EdgeScreen(edge, 'http://127.0.0.1:8001/', quiet);
+  edge.urlChanged.emit('http://127.0.0.1:8001/');
+  edge.urlChanged.emit('https://publicidad.example/');
+  await tick();
+  assert.deepEqual(calls.map(([m, p]) => [m, p.url]), [['Page.navigate', 'http://127.0.0.1:8001/']]);
+});
+
+test('búsqueda del celular: se busca en el Cine; otras direcciones no se abren', async () => {
+  const calls = [];
+  const screen = new EdgeScreen(fakeEdge(async (method, params) => { calls.push([method, params]); return { result: { value: true } }; }), 'http://127.0.0.1:8001/', quiet);
+  await screen.openUrl('https://www.google.com/search?q=el%20padrino');
+  const searched = calls.find(([m, p]) => m === 'Runtime.evaluate' && String(p?.expression).includes('__controlTvSearch'));
+  assert.ok(searched?.[1].expression.includes('"el padrino"'), 'Le pasa lo buscado al Cine (como texto, sin código)');
+  calls.length = 0;
+  await screen.openUrl('https://www.youtube.com/watch?v=abc');
+  assert.deepEqual(calls, [], 'Ni navega ni evalúa nada');
 });
 
 test('flecha ambigua seguida de Enter y texto conserva el orden de llegada', async () => {
-  const { RemoteCommandHandler } = require('../dist/application/remote-command-handler');
+  const { RemoteCommandHandler } = require('../dist/src/application/remote-command-handler');
   const calls = [];
   let release;
   const screen = {
@@ -51,7 +77,7 @@ test('flecha ambigua seguida de Enter y texto conserva el orden de llegada', asy
     insertText: async text => { calls.push(text); },
   };
   const pointer = { inUse: true, hide() { this.inUse = false; }, scroll() {} };
-  const handler = new RemoteCommandHandler(screen, pointer, {}, { isOn: true, touch() {} }, {}, {});
+  const handler = new RemoteCommandHandler(screen, pointer, {}, { isOn: true, touch() {} }, {});
   await handler.handle({ kind: 'key', key: 'DOWN' });
   const enter = handler.handle({ kind: 'key', key: 'OK' });
   const text = handler.handle({ kind: 'text', text: 'hola' });
@@ -59,6 +85,16 @@ test('flecha ambigua seguida de Enter y texto conserva el orden de llegada', asy
   release();
   await Promise.all([enter, text]);
   assert.deepEqual(calls, ['DOWN', 'ENTER', 'hola']);
+});
+
+test('botones Inicio y Menú del celular: los dos vuelven al principio del Cine', async () => {
+  const { RemoteCommandHandler } = require('../dist/src/application/remote-command-handler');
+  let homes = 0;
+  const screen = { goHome: async () => { homes++; } };
+  const handler = new RemoteCommandHandler(screen, { inUse: false, hide() {} }, {}, { isOn: true, touch() {} }, {});
+  await handler.handle({ kind: 'key', key: 'HOME' });
+  await handler.handle({ kind: 'key', key: 'MENU' });
+  assert.equal(homes, 2);
 });
 
 test('pantalla lenta: acota flechas y respeta Enter y cambios de dirección', async () => {
@@ -85,49 +121,29 @@ test('una orden fallida no bloquea las siguientes y la cola tiene límite', asyn
   await Promise.all([busy, ...jobs]);
 });
 
-test('Atrás restablece identidad ANTES de navegar desde YouTube TV a otra app', async () => {
-  const calls = [];
-  const edge = {
-    urlChanged: new Signal(), popupRequested: new Signal(),
-    page: async (method, params) => {
-      calls.push([method, params]);
-      if (method === 'Runtime.evaluate') return { result: { value: false } };
-      if (method === 'Page.getNavigationHistory') return { currentIndex: 1, entries: [{ id: 8, url: 'https://example.com/browse' }] };
-      return {};
-    },
-  };
-  const screen = new EdgeScreen(edge, { forUrl: () => undefined }, 'http://127.0.0.1:8001/', { info() {}, warn() {} });
-  edge.urlChanged.emit('https://www.youtube.com/tv');
-  await screen.back();
-  assert.deepEqual(calls.slice(-2), [
-    ['Network.setUserAgentOverride', { userAgent: '' }],
-    ['Page.navigateToHistoryEntry', { entryId: 8 }],
-  ]);
+test('apagado automático: no corta la imagen si se está viendo algo', async () => {
+  const { PowerService } = require('../dist/src/application/power-service');
+  let playing = true;
+  let goneHome = 0;
+  const display = { keepAwake() {}, turnOff() {}, turnOn() {} };
+  const service = new PowerService(display, { goHome: async () => { goneHome++; } }, { lock() {} }, { get: () => 1 }, quiet, { isPlaying: async () => playing });
+  service.lastActivity = 0;
+  await service.checkAutoOff();
+  assert.equal(service.isOn, true, 'Con un video en curso sigue prendida');
+  playing = false;
+  await service.checkAutoOff();
+  assert.equal(service.isOn, false);
+  assert.equal(goneHome, 1, 'Al apagar, el Cine corta el video y vuelve al principio');
 });
 
-test('inicio: una lista vieja de apps retiradas vuelve a la selección de fábrica', () => {
-  const { UiStateService } = require('../dist/application/ui-state');
-  const apps = {
-    list: () => [], forUrl: () => undefined, reload: () => undefined,
-    find: (id) => (['cinema', 'youtube'].includes(id) ? { id } : undefined),
-    defaultHome: () => ['cinema', 'youtube'],
-  };
-  const values = { homeApps: ['netflix', 'disney'], name: 'Notebook TV', ambientMinutes: 3, gpu: 'integrated' };
-  const settings = { get: (key) => values[key] };
-  const service = new UiStateService(
-    settings, { localAddress: () => null }, { pairedCount: 0, allowNew: true },
-    { names: [], changed: { subscribe() {} } }, { current: null, changed: { subscribe() {} } }, { publish() {} }, apps,
-  );
-  assert.deepEqual(service.current().homeApps, ['cinema', 'youtube']);
-});
-
-test('reposo: actividad mientras se consulta el video no termina en ahorro', async () => {  const { IdlePowerService } = require('../dist/application/idle-power-service');
+test('reposo: actividad mientras se consulta el video no termina en ahorro', async () => {
+  const { IdlePowerService } = require('../dist/src/application/idle-power-service');
   let release;
   const activations = [];
   const service = new IdlePowerService(
     { activate: async mode => { activations.push(mode); } },
     { msSinceInput: () => 999999, isMediaPlaying: () => new Promise(resolve => { release = resolve; }) },
-    { isOn: true }, { get: () => 1 }, { info() {}, warn() {} },
+    { isOn: true }, { get: () => 1 }, quiet,
   );
   service.lastActivity = 0;
   const check = service.check();
@@ -139,7 +155,7 @@ test('reposo: actividad mientras se consulta el video no termina en ahorro', asy
 });
 
 test('puntero: movimiento acumulado precede al clic, sin duplicarse en drain', () => {
-  const { InputHost } = require('../dist/infrastructure/windows/input-host');
+  const { InputHost } = require('../dist/src/infrastructure/windows/input-host');
   const { EventEmitter } = require('node:events');
   const stdin = new EventEmitter();
   const commands = [];
@@ -157,9 +173,9 @@ test('puntero: movimiento acumulado precede al clic, sin duplicarse en drain', (
   assert.equal(commands.length, 42);
 });
 
-test('reconexión CDP conserva la plataforma y libera el socket anterior', async () => {
-  const { EdgeConnection } = require('../dist/infrastructure/edge/edge-connection');
-  const { CdpClient } = require('../dist/infrastructure/edge/cdp-client');
+test('reconexión CDP conserva la página y libera el socket anterior', async () => {
+  const { EdgeConnection } = require('../dist/src/infrastructure/edge/edge-connection');
+  const { CdpClient } = require('../dist/src/infrastructure/edge/cdp-client');
   const calls = [];
   const originalProbe = CdpClient.probe;
   const originalConnect = CdpClient.connect;
@@ -167,7 +183,7 @@ test('reconexión CDP conserva la plataforma y libera el socket anterior', async
     isOpen: true, on() {}, onClose() {},
     send: async (method, params) => {
       calls.push([method, params]);
-      if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'movie', type: 'page', url: 'https://example.com/watch/123' }] };
+      if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'cine', type: 'page', url: 'http://127.0.0.1:8001/#reproduciendo' }] };
       if (method === 'Target.attachToTarget') return { sessionId: 'session' };
       if (method === 'SystemInfo.getProcessInfo') return { processInfo: [] };
       if (method === 'Browser.getWindowBounds') return { bounds: { windowState: 'fullscreen' } };
@@ -177,40 +193,17 @@ test('reconexión CDP conserva la plataforma y libera el socket anterior', async
   CdpClient.probe = async () => ({ userAgent: 'Edge', webSocketDebuggerUrl: 'unused' });
   CdpClient.connect = async () => client;
   try {
-    const edge = new EdgeConnection({ injectScript: require('node:path').join(__dirname, '../ui/js/inject.js'), port: 0, homeUrl: 'http://127.0.0.1:8001/', headless: true }, { info() {}, warn() {} });
+    const edge = new EdgeConnection({ injectScript: require('node:path').join(__dirname, '../ui/js/web/inject.js'), port: 0, homeUrl: 'http://127.0.0.1:8001/', headless: true }, quiet);
     let closed = false;
     let url;
     edge.client = { close() { closed = true; } };
     edge.urlChanged.subscribe(value => { url = value; });
     await edge.ensure();
     assert.equal(closed, true);
-    assert.equal(url, 'https://example.com/watch/123');
-    assert.equal(calls.some(([method]) => method === 'Page.navigate'), false);
+    assert.equal(url, 'http://127.0.0.1:8001/#reproduciendo');
+    assert.equal(calls.some(([method]) => method === 'Page.navigate'), false, 'Reconectar no recarga el Cine (no corta la película)');
   } finally {
     CdpClient.probe = originalProbe;
     CdpClient.connect = originalConnect;
   }
-});
-
-test('búsqueda del celular: con el Cine abierto busca ahí; si la página no tiene buscador, abre Google', async () => {
-  const run = async (pageHandlesSearch) => {
-    const calls = [];
-    const edge = { urlChanged: new Signal(), popupRequested: new Signal(), isReady: true, ensure: async () => {}, bringToFront: async () => {},
-      page: async (method, params) => {
-        calls.push([method, params]);
-        if (method === 'Runtime.evaluate' && String(params?.expression).includes('__controlTvSearch')) return { result: { value: pageHandlesSearch } };
-        return { result: { value: false } };
-      } };
-    const screen = new EdgeScreen(edge, { forUrl: () => undefined }, 'http://127.0.0.1:8001/', { info: () => {}, warn: () => {} });
-    edge.urlChanged.emit('http://127.0.0.1:8001/cinema.html');
-    await screen.openUrl('https://www.google.com/search?q=el%20padrino');
-    const searched = calls.find(([m, p]) => m === 'Runtime.evaluate' && String(p?.expression).includes('__controlTvSearch'));
-    const navigated = calls.find(([m]) => m === 'Page.navigate');
-    return { searched, navigated };
-  };
-  const inCinema = await run(true);
-  assert.ok(inCinema.searched?.[1].expression.includes('"el padrino"'), 'Le pasa lo buscado al Cine (como texto, sin código)');
-  assert.equal(inCinema.navigated, undefined, 'No sale del Cine');
-  const elsewhere = await run(false);
-  assert.equal(elsewhere.navigated?.[1].url, 'https://www.google.com/search?q=el%20padrino', 'Sin buscador propio: Google como siempre');
 });

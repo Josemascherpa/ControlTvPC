@@ -5,7 +5,6 @@
 
 import { fork } from 'child_process';
 import { join } from 'path';
-import WebSocket from 'ws';
 import { PORTS } from './config/paths';
 import { asRecord } from './infrastructure/storage/json';
 
@@ -21,22 +20,9 @@ async function alreadyRunning(): Promise<boolean> {
   }
 }
 
-function askToShow(): Promise<void> {
-  return new Promise((resolve) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${PORTS.server}/ui`);
-    ws.on('open', () => {
-      ws.send(JSON.stringify({ type: 'show' } satisfies Contracts.UiToServer));
-      setTimeout(() => {
-        ws.close();
-      }, 300);
-    });
-    ws.on('close', () => {
-      resolve();
-    });
-    ws.on('error', () => {
-      resolve();
-    });
-  });
+async function askToShow(): Promise<void> {
+  await fetch(`http://127.0.0.1:${PORTS.server}/api/show`, { method: 'POST', signal: AbortSignal.timeout(3000) })
+    .catch(() => undefined);
 }
 
 function supervise(): void {

@@ -1,17 +1,15 @@
-import { createHash } from 'crypto';
 import { readFile } from 'fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
-import { basename, extname, join, normalize } from 'path';
+import { extname, join, normalize } from 'path';
 import type { Duplex } from 'stream';
 import type WebSocket from 'ws';
 import { WebSocketServer } from 'ws';
 import type { PhoneHandshake, RemoteCommand } from '../../domain/remote';
-import type { Logger, UiPublisher } from '../../domain/ports';
+import type { Logger } from '../../domain/ports';
 import {
   decodeClientName, parseSamsungMessage, SAMSUNG_INFO_PATHS, SAMSUNG_REMOTE_PATH, samsungDeviceInfo, samsungMessages,
   type HdmiTvInfo,
 } from './samsung-protocol';
-import { parseUiCommand } from './ui-messages';
 import { wsText } from '../ws-text';
 
 const MIME: Readonly<Record<string, string>> = {
@@ -22,33 +20,24 @@ const MIME: Readonly<Record<string, string>> = {
 const LOCAL_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const PING_MS = 15_000;
 
-/** Lo que el servidor necesita del resto de la app (inyectado desde app.ts). */
 /** Quien decide qué celulares entran (el servidor sólo guarda la sesión y la devuelve al cerrar). */
 export interface PhoneGateway<S extends { readonly token: string }> {
   connect(handshake: PhoneHandshake): S | null;
   disconnect(session: S): void;
 }
 
+/** Lo que el servidor necesita del resto de la app (inyectado desde app.ts). */
 export interface TvServerDeps<S extends { readonly token: string }> {
   readonly port: number;
+  /** La carpeta del Cine (la app completa: html, css, js, fuentes, hls.js). */
   readonly uiDir: string;
-  readonly backgroundsDir: string;
   readonly deviceName: () => string;
   readonly localAddress: () => string | null;
   readonly hdmiTv: () => HdmiTvInfo;
   readonly phones: PhoneGateway<S>;
   readonly onRemoteCommand: (command: RemoteCommand) => Promise<void>;
-  readonly onUiCommand: (command: Contracts.UiToServer) => Promise<void>;
-  readonly uiState: () => Contracts.UiState;
-  readonly home: () => Contracts.HomeSnapshot;
-  readonly apps: () => readonly Contracts.AppTile[];
-  readonly library?: (params: URLSearchParams) => Promise<Contracts.LibraryReply>;
-  /** Trae un archivo de subtítulos (VTT) para el reproductor propio, sin depender de CORS. */
-  readonly subtitle?: (url: string) => Promise<string | null>;
-  /** Imagen del catálogo guardada en el disco (sólo de TMDB). */
-  readonly image?: (url: string) => Promise<{ readonly file: string; readonly type: string } | null>;
-  readonly hlsScript?: string;
-  readonly iconPath: (appId: string) => Promise<string | null>;
+  /** El acceso directo del escritorio pide ver la tele (ControlTv ya estaba corriendo). */
+  readonly onShow: () => Promise<void>;
   readonly log: Logger;
 }
 
@@ -56,27 +45,18 @@ type AliveSocket = WebSocket & { alive?: boolean };
 
 type Reply =
   | { readonly kind: 'json'; readonly status: number; readonly body: unknown }
-  | { readonly kind: 'file'; readonly file: string; readonly cache: string }
-  | { readonly kind: 'text'; readonly status: number; readonly type: string; readonly body: string; readonly cache: string; readonly etag?: string };
+  | { readonly kind: 'file'; readonly file: string; readonly cache: string };
 
 const json = (status: number, body: unknown): Reply => ({ kind: 'json', status, body });
 const fileReply = (file: string, cache: string): Reply => ({ kind: 'file', file, cache });
-const textReply = (body: string, type: string, cache: string): Reply => ({ kind: 'text', status: 200, type, body, cache });
-/** JSON con huella: si Edge ya tiene esa misma respuesta, se contesta 304 (sin cuerpo) y la reusa. */
-const etagged = (body: unknown): Reply => {
-  const text = JSON.stringify(body);
-  const etag = `"${createHash('sha1').update(text).digest('base64url').slice(0, 16)}"`;
-  return { kind: 'text', status: 200, type: 'application/json; charset=utf-8', body: text, cache: 'no-cache', etag };
-};
 
 /**
- * Servidor de la notebook. Para la red (el celular) habla como una Samsung; para la propia
- * notebook sirve la pantalla de inicio, sus datos y un canal de avisos en vivo (/ui).
+ * Servidor de la notebook. Para la red (el celular) habla como una Samsung; para la propia notebook
+ * sirve los archivos del Cine (la app no le pide nada más: consulta internet por su cuenta).
  */
-export class TvServer<S extends { readonly token: string }> implements UiPublisher {
+export class TvServer<S extends { readonly token: string }> {
   private readonly http: Server;
   private readonly remoteWss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
-  private readonly uiWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
   constructor(private readonly deps: TvServerDeps<S>) {
     this.http = createServer((req, res) => {
@@ -90,9 +70,6 @@ export class TvServer<S extends { readonly token: string }> implements UiPublish
     });
     this.remoteWss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
       this.onRemote(ws, req);
-    });
-    this.uiWss.on('connection', (ws: WebSocket) => {
-      this.onUi(ws);
     });
     // Si un celular desaparece sin cerrar (se fue del WiFi), el ping lo detecta.
     setInterval(() => {
@@ -116,52 +93,23 @@ export class TvServer<S extends { readonly token: string }> implements UiPublish
     });
   }
 
-  publish(message: Contracts.ServerToUi): void {
-    const text = JSON.stringify(message);
-    for (const ws of this.uiWss.clients) if (ws.readyState === ws.OPEN) ws.send(text);
-  }
-
   private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const reply = await this.resolve(req);
+    const reply = this.resolve(req);
     if (reply.kind === 'json') send(res, reply.status, reply.body);
-    else if (reply.kind === 'text') {
-      if (reply.etag && req.headers['if-none-match'] === reply.etag) {
-        res.writeHead(304, { ETag: reply.etag, 'Cache-Control': reply.cache });
-        res.end();
-        return;
-      }
-      res.writeHead(reply.status, { 'Content-Type': reply.type, 'Cache-Control': reply.cache, ...(reply.etag ? { ETag: reply.etag } : {}) });
-      res.end(reply.body);
-    } else await serveFile(res, reply.file, reply.cache);
+    else await serveFile(res, reply.file, reply.cache);
   }
 
   /** Decide qué contestar. Separado de cómo se manda, así cada ruta es una línea clara. */
-  private async resolve(req: IncomingMessage): Promise<Reply> {
+  private resolve(req: IncomingMessage): Reply {
     const { pathname } = new URL(req.url ?? '/', 'http://x');
     const d = this.deps;
     if (SAMSUNG_INFO_PATHS.includes(pathname)) {
       return json(200, samsungDeviceInfo(d.deviceName(), d.localAddress() ?? '127.0.0.1', d.port, d.hdmiTv()));
     }
     if (!isLocal(req)) return json(403, { error: 'sólo desde la notebook' });
-    if (pathname === '/api/library' && d.library) return etagged(await d.library(new URL(req.url ?? '/', 'http://x').searchParams));
-    if (pathname === '/img' && d.image) {
-      const image = await d.image(new URL(req.url ?? '/', 'http://x').searchParams.get('u') ?? '');
-      // La misma dirección es siempre la misma imagen: Edge la guarda para siempre y no vuelve a pedirla.
-      return image ? fileReply(image.file, 'public, max-age=31536000, immutable') : json(404, { error: 'sin imagen' });
-    }
-    if (pathname === '/api/subtitle' && d.subtitle) {
-      const url = new URL(req.url ?? '/', 'http://x').searchParams.get('url') ?? '';
-      const vtt = url ? await d.subtitle(url) : null;
-      return vtt ? textReply(vtt, 'text/vtt; charset=utf-8', 'max-age=3600') : json(404, { error: 'sin subtítulos' });
-    }
-    if (pathname === '/vendor/hls.js' && d.hlsScript) return fileReply(d.hlsScript, 'no-cache');
-    if (pathname === '/api/home') return json(200, d.home());
-    if (pathname === '/api/apps') return json(200, d.apps());
-    if (pathname === '/api/state') return json(200, d.uiState());
-    if (pathname.startsWith('/bg/')) return fileReply(join(d.backgroundsDir, basename(pathname)), 'max-age=86400');
-    if (pathname.startsWith('/icon/')) {
-      const icon = await d.iconPath(basename(pathname, '.png'));
-      return icon ? fileReply(icon, 'max-age=86400') : json(404, { error: 'sin ícono' });
+    if (pathname === '/api/show' && req.method === 'POST') {
+      d.onShow().catch((error: unknown) => { d.log.warn('Mostrar la tele:', error); });
+      return json(200, { ok: true });
     }
     const file = normalize(join(d.uiDir, pathname === '/' ? 'index.html' : pathname.slice(1)));
     return file.startsWith(d.uiDir) ? fileReply(file, 'no-cache') : json(403, { error: 'no' });
@@ -171,8 +119,6 @@ export class TvServer<S extends { readonly token: string }> implements UiPublish
     const { pathname } = new URL(req.url ?? '/', 'http://x');
     if (pathname === SAMSUNG_REMOTE_PATH) {
       this.remoteWss.handleUpgrade(req, socket, head, (ws) => this.remoteWss.emit('connection', ws, req));
-    } else if (pathname === '/ui' && isLocal(req)) {
-      this.uiWss.handleUpgrade(req, socket, head, (ws) => this.uiWss.emit('connection', ws, req));
     } else {
       socket.destroy();
     }
@@ -204,17 +150,6 @@ export class TvServer<S extends { readonly token: string }> implements UiPublish
     });
     ws.on('close', () => {
       this.deps.phones.disconnect(session);
-    });
-  }
-
-  private onUi(ws: WebSocket): void {
-    ws.send(JSON.stringify({ type: 'state', state: this.deps.uiState() } satisfies Contracts.ServerToUi));
-    ws.on('message', (data: WebSocket.RawData) => {
-      const command = parseUiCommand(wsText(data));
-      if (!command) return;
-      this.deps.onUiCommand(command).catch((error: unknown) => {
-        this.deps.log.warn('Inicio:', error);
-      });
     });
   }
 }

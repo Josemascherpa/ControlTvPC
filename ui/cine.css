@@ -1,4 +1,4 @@
-@font-face{font-family:Inter;src:url('/fonts/inter.woff2') format('woff2');font-weight:100 900;font-display:swap}
+@font-face{font-family:Inter;src:url('fonts/inter.woff2') format('woff2');font-weight:100 900;font-display:swap}
 :root{
   --bg:#07090c;--text:#f4f6f8;--muted:#9aa7b3;--accent:#7ce8c4;--line:#ffffff14;
   --ease:cubic-bezier(.2,.8,.2,1);--lift:cubic-bezier(.3,1.35,.5,1);

@@ -1,5 +1,5 @@
 import type { RemoteCommand, RemoteKey } from '../domain/remote';
-import type { MediaKeys, PageKey, TvScreen, UiPublisher } from '../domain/ports';
+import type { MediaKeys, PageKey, TvScreen } from '../domain/ports';
 import type { PointerService, ScrollDirection } from './pointer-service';
 import type { PowerService } from './power-service';
 import type { VolumeService } from './volume-service';
@@ -35,7 +35,6 @@ export class RemoteCommandHandler {
     private readonly volume: VolumeService,
     private readonly power: PowerService,
     private readonly media: MediaKeys,
-    private readonly ui: UiPublisher,
   ) {}
 
   async handle(command: RemoteCommand): Promise<void> {
@@ -91,12 +90,8 @@ export class RemoteCommandHandler {
       case 'UP': case 'DOWN': case 'LEFT': case 'RIGHT': return this.screenCommands.run(() => this.screen.pressKey(key), key);
       case 'OK': return this.screenCommands.run(() => this.screen.pressKey('ENTER'));
       case 'BACK': return this.screenCommands.run(() => this.screen.back());
-      case 'HOME': return this.screenCommands.run(() => this.screen.atHome ? this.screen.pressKey('ESCAPE') : this.screen.goHome());
-      case 'MENU':
-        return this.screenCommands.run(async () => {
-          if (!this.screen.atHome) await this.screen.goHome();
-          this.ui.publish({ type: 'menu' });
-        });
+      // Sin inicio ni menú aparte: los dos vuelven al principio del Cine.
+      case 'HOME': case 'MENU': return this.screenCommands.run(() => this.screen.goHome());
       case 'CHANNEL_UP': return this.screenCommands.run(() => this.screen.pressKey('PAGE_UP'));
       case 'CHANNEL_DOWN': return this.screenCommands.run(() => this.screen.pressKey('PAGE_DOWN'));
       case 'PLAY_PAUSE':

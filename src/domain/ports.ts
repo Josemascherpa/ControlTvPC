@@ -3,20 +3,19 @@
 // en app.ts. Así la lógica se puede probar con versiones falsas y cambiar una pieza no rompe el resto.
 // Interfaces chicas y específicas (la "I" de SOLID).
 
-import type { TvApp } from './apps';
 import type { Settings } from './settings';
 import type { Signal } from './signal';
 
 /** Teclas que se le pueden mandar a la página abierta. */
 export type PageKey = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT' | 'ENTER' | 'ESCAPE' | 'PAGE_UP' | 'PAGE_DOWN';
 
-/** La pantalla de la tele: el inicio y las apps. */
+/** La pantalla de la tele: el Cine, la única app. */
 export interface TvScreen {
-  readonly atHome: boolean;
   /** Se asegura de que esté abierta y al frente (la abre si se había cerrado). */
   show(): Promise<void>;
+  /** Al principio del catálogo (botón Inicio), cerrando lo que esté abierto. */
   goHome(): Promise<void>;
-  openApp(app: TvApp): Promise<void>;
+  /** Lo que manda el celular para abrir: sus búsquedas se hacen en el Cine; lo demás no se abre. */
   openUrl(url: string): Promise<void>;
   back(): Promise<void>;
   pressKey(key: PageKey): Promise<void>;
@@ -98,6 +97,11 @@ export interface ActivityProbe {
   isMediaPlaying(): Promise<boolean>;
 }
 
+/** ¿Se está viendo algo en la tele? */
+export interface MediaActivity {
+  isPlaying(): Promise<boolean>;
+}
+
 export interface MediaKeys {
   playPause(): void;
 }
@@ -116,28 +120,9 @@ export interface SettingsStore {
   set<K extends keyof Settings>(key: K, value: Settings[K]): void;
 }
 
-export interface AppCatalog {
-  list(): readonly TvApp[];
-  find(id: string): TvApp | undefined;
-  /** Las apps que van en el inicio si la persona todavía no eligió. */
-  defaultHome(): readonly string[];
-  /** La app a la que pertenece una dirección, si es de alguna. */
-  forUrl(url: string): TvApp | undefined;
-  reload(): void;
-}
-
 export interface NetworkInfo {
   /** La IP de la notebook en el WiFi de la casa, o null si no hay red. */
   localAddress(): string | null;
-}
-
-export interface HomeData {
-  snapshot(): Contracts.HomeSnapshot;
-}
-
-/** Avisos en vivo a la pantalla de inicio. */
-export interface UiPublisher {
-  publish(message: Contracts.ServerToUi): void;
 }
 
 export interface Logger {
