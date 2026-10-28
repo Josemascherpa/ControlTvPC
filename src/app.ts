@@ -5,6 +5,8 @@
 import { join } from 'path';
 import { HOME_URL, PATHS, PORTS, ROOT } from './config/paths';
 import { FramexLibrary } from './infrastructure/media/framex-library';
+import { Translator } from './infrastructure/media/translator';
+import { ImageCache } from './infrastructure/media/image-cache';
 import { PhoneAccess } from './application/phone-access';
 import { IdlePowerService } from './application/idle-power-service';
 import { PhoneSessions } from './application/phone-sessions';
@@ -43,7 +45,12 @@ async function main(): Promise<void> {
   const log = new FileLogger(PATHS.logs);
   const settings = new SettingsFile(PATHS.settings);
   const apps = new AppCatalogFile(PATHS.customApps, PATHS.appsExample);
-  const library = new FramexLibrary();
+  // Catálogo del Cine, con las sinopsis traducidas al español (cada una una sola vez, guardada en el disco).
+  // El catálogo también queda en el disco: al abrir el Cine se muestra al instante lo último que se
+  // vio y se actualiza por detrás sólo si cambió.
+  const library = new FramexLibrary(undefined, new Translator(join(PATHS.data, 'cache', 'traducciones.json')),
+    join(PATHS.data, 'cache', 'catalogo.json'));
+  const images = new ImageCache(join(PATHS.data, 'cache', 'imagenes'));
   const network = new OsNetwork();
   const display = new WindowsDisplay();
   const inputHost = new InputHost(PATHS.nativeScripts, log);
@@ -100,6 +107,7 @@ async function main(): Promise<void> {
     uiDir: PATHS.ui,
     library: (params) => library.query(params),
     subtitle: (url) => library.subtitle(url),
+    image: (url) => images.get(url),
     hlsScript: join(ROOT, 'node_modules', 'hls.js', 'dist', 'hls.min.js'),
     backgroundsDir: PATHS.backgrounds,
     deviceName: () => settings.get('name'),

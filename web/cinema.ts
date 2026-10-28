@@ -141,15 +141,60 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : 'No se pudo cargar. Probá de nuevo.';
 }
 
-async function api(op: string, params: Record<string, string> = {}, cancel?: AbortSignal): Promise<Contracts.LibraryReply> {
+// ---------- Barra de actividad ----------
+// Mientras haya algo cargando (búsqueda, ficha, fuente de video), una barra finita arriba. Aparece
+// recién a los 150 ms: lo que carga rápido no hace parpadear nada.
+let busyCount = 0;
+let busyTimer = 0;
+function busy(delta: 1 | -1): void {
+  busyCount = Math.max(0, busyCount + delta);
+  clearTimeout(busyTimer);
+  if (busyCount > 0) busyTimer = window.setTimeout(() => { document.body.classList.add('is-busy'); }, 150);
+  else document.body.classList.remove('is-busy');
+}
+
+/**
+ * Imágenes del catálogo a través del servicio: las guarda en el disco en WebP y Edge las guarda
+ * para siempre (misma dirección = misma imagen). Así no se vuelve a bajar nada que ya se vio.
+ */
+function imageUrl(src: string): string {
+  return src.startsWith('https://image.tmdb.org/') ? `/img?u=${encodeURIComponent(src)}` : src;
+}
+
+/**
+ * Fichas y temporadas ya vistas, en memoria: volver a abrir una es instantáneo y sin consultas.
+ * (El servicio además las guarda en el disco y las actualiza por detrás si cambian.)
+ */
+const MEMO_OPS = new Set(['details', 'season']);
+const MEMO_LIMIT = 80;
+const memo = new Map<string, Contracts.LibraryReply>();
+
+async function api(op: string, params: Record<string, string> = {}, cancel?: AbortSignal, quiet = false): Promise<Contracts.LibraryReply> {
   const query = new URLSearchParams({ op, ...params });
+  const memoKey = MEMO_OPS.has(op) ? query.toString() : '';
+  const remembered = memoKey ? memo.get(memoKey) : undefined;
+  if (remembered) return remembered;
+  const reply = await request(query, cancel, quiet);
+  if (memoKey) {
+    if (memo.size >= MEMO_LIMIT) memo.delete(memo.keys().next().value ?? '');
+    memo.set(memoKey, reply);
+  }
+  return reply;
+}
+
+async function request(query: URLSearchParams, cancel: AbortSignal | undefined, quiet: boolean): Promise<Contracts.LibraryReply> {
   const timeout = AbortSignal.timeout(30_000);
   const signal = cancel ? AbortSignal.any([cancel, timeout]) : timeout;
-  const response = await fetch(`/api/library?${query.toString()}`, { signal });
-  if (!response.ok) throw new Error('No se pudo consultar el catálogo.');
-  const result = (await response.json()) as Contracts.LibraryReply;
-  if (result.error) throw new Error(result.error);
-  return result;
+  if (!quiet) busy(1);
+  try {
+    const response = await fetch(`/api/library?${query.toString()}`, { signal });
+    if (!response.ok) throw new Error('No se pudo consultar el catálogo.');
+    const result = (await response.json()) as Contracts.LibraryReply;
+    if (result.error) throw new Error(result.error);
+    return result;
+  } finally {
+    if (!quiet) busy(-1);
+  }
 }
 
 function metaText(item: Contracts.LibraryTitle, genres: readonly string[] = []): string {
@@ -203,12 +248,16 @@ function focusElement(node: HTMLElement | null): void {
   const row = node.closest('.row, .related, .seasons, .chips, .actions, #topbar, .controls-row');
   if (row !== activeRow) {
     activeRow?.classList.remove('is-active');
+    // La fila que se deja vuelve sola (con un desliz) a su inicio: al pasar de nuevo se ve prolija.
+    const leftTrack = activeRow?.querySelector<HTMLElement>(':scope > .track');
+    if (leftTrack) leftTrack.style.transform = '';
     row?.classList.add('is-active');
     activeRow = row;
   }
   const parent = node.parentElement;
   if (parent) rowMemory.set(parent, [...parent.children].indexOf(node));
   if (detailPanel.hidden && player.hidden) {
+    if (rowsEl.contains(node)) hydrateAround(node);
     revealRow(node);
     spotlightFor(node);
   } else if (!detailPanel.hidden && detailBody.contains(node)) {
@@ -216,10 +265,25 @@ function focusElement(node: HTMLElement | null): void {
   }
 }
 
-/** Dentro de una fila horizontal: la tarjeta queda a la vista con una de margen (desliz suave). */
+/**
+ * Dentro de una fila horizontal. En el catálogo, como Netflix o Google TV en la tele: la tarjeta
+ * elegida queda siempre en el primer lugar y es la fila entera la que se desliza (con la placa de
+ * video, siempre la misma animación). En la ficha, las filas chicas se desplazan lo justo.
+ */
 function revealInTrack(node: HTMLElement): void {
   const track = node.parentElement;
-  if (!track || track.scrollWidth <= track.clientWidth) return;
+  if (!track) return;
+  if (track.classList.contains('track')) {
+    const first = track.firstElementChild;
+    const last = track.lastElementChild;
+    if (!(first instanceof HTMLElement) || !(last instanceof HTMLElement)) return;
+    // Hasta el final de la fila, sin dejar un hueco vacío a la derecha.
+    const max = Math.max(0, last.offsetLeft + last.offsetWidth - first.offsetLeft + 80 - track.clientWidth);
+    const shift = Math.min(max, node.offsetLeft - first.offsetLeft);
+    track.style.transform = shift > 0 ? `translate3d(${String(-shift)}px, 0, 0)` : '';
+    return;
+  }
+  if (track.scrollWidth <= track.clientWidth) return;
   const box = track.getBoundingClientRect();
   const rect = node.getBoundingClientRect();
   const margin = Math.min(rect.width * 1.2, 190);
@@ -263,22 +327,44 @@ function showSpotlight(item: Contracts.LibraryTitle, preview: boolean): void {
     heroEyebrow.textContent = preview ? (item.type === 'tv' ? 'Serie' : 'Película') : 'Destacado';
     heroTitle.textContent = item.title;
     heroMeta.textContent = metaText(item);
-    heroOverview.textContent = item.overview;
+    heroOverview.textContent = translatedOverviews.get(item.overview) ?? item.overview;
     heroCopy.classList.toggle('is-preview', preview);
     heroCopy.classList.remove('is-changing');
   });
-  // La imagen espera a que el control se quede quieto un instante: recorriendo rápido no se
-  // bajan ni decodifican imágenes de más.
+  // La imagen (y la sinopsis en español) esperan a que el control se quede quieto un instante:
+  // recorriendo rápido no se bajan ni decodifican imágenes ni se traducen textos de más.
   clearTimeout(spotlightTimer);
-  spotlightTimer = window.setTimeout(() => { void swapHeroImage(item.backdrop || item.poster); }, 180);
+  spotlightTimer = window.setTimeout(() => {
+    void swapHeroImage(item.backdrop || item.poster);
+    void spanishOverview(item, key);
+  }, 180);
+}
+
+/** Sinopsis traducidas (las pide el destacado; el servicio las guarda para siempre). */
+const translatedOverviews = new Map<string, string>();
+
+async function spanishOverview(item: Contracts.LibraryTitle, key: string): Promise<void> {
+  const original = item.overview;
+  if (!original) return;
+  let spanish = translatedOverviews.get(original);
+  if (spanish === undefined) {
+    try {
+      spanish = (await api('translate', { text: original }, undefined, true)).translated ?? original;
+    } catch {
+      return; // sin traducción: queda la original
+    }
+    translatedOverviews.set(original, spanish);
+  }
+  if (heroShown === key && spanish !== original) heroOverview.textContent = spanish;
 }
 
 async function swapHeroImage(src: string): Promise<void> {
   const front = heroImages[heroFront];
-  if (!src || front.src === src) return;
+  const url = src ? new URL(imageUrl(src), location.href).href : '';
+  if (!url || front.src === url) return;
   const next = heroFront === 0 ? 1 : 0;
   const incoming = heroImages[next];
-  incoming.src = src;
+  incoming.src = url;
   try {
     await incoming.decode(); // se decodifica antes del fundido: el cambio no traba un cuadro
   } catch {
@@ -403,6 +489,62 @@ function entryTitle(entry: ProgressEntry): Contracts.LibraryTitle {
 
 // ---------- Catálogo ----------
 
+// Como FlashList (React Native), adaptado a la tele:
+//  - Reciclado: cada tarjeta se crea UNA vez y se reusa entre catálogo y búsquedas (mismo título =
+//    mismo nodo, con su imagen ya decodificada). Escribir en el buscador no rearma cientos de nodos.
+//  - Distancia de dibujo: sólo se bajan y decodifican las imágenes cerca del foco (la fila elegida y
+//    las dos de abajo, unas tarjetas por delante). Medido antes: decodificar en plena animación
+//    trababa cuadros; así llegan decodificadas antes de entrar en pantalla, y las lejanas no gastan.
+const DRAW_AHEAD = 14;
+const ROWS_AHEAD = 2;
+const POOL_LIMIT = 400;
+const cardPool = new Map<string, HTMLButtonElement>();
+/** Tarjetas ya puestas en la lista que se está armando (un mismo título en dos filas = dos nodos). */
+let placed = new Set<HTMLButtonElement>();
+
+function cardFor(item: Contracts.LibraryTitle): HTMLButtonElement {
+  const key = `${item.type}:${item.id}`;
+  const reused = cardPool.get(key);
+  const known = reused ? cardItems.get(reused) : undefined;
+  if (reused && !placed.has(reused) && known?.poster === item.poster && known.title === item.title) {
+    reused.classList.remove('just-focused', 'pressed');
+    placed.add(reused);
+    return reused;
+  }
+  const card = makeCard(item);
+  if (!reused || placed.has(reused)) {
+    if (cardPool.size >= POOL_LIMIT) cardPool.delete(cardPool.keys().next().value ?? '');
+    cardPool.set(key, card);
+  }
+  placed.add(card);
+  return card;
+}
+
+function hydrateCard(card: Element): void {
+  const poster = card.querySelector<HTMLImageElement>('img.poster[data-src]');
+  const src = poster?.dataset['src'];
+  if (!poster || !src) return;
+  delete poster.dataset['src'];
+  poster.src = src;
+}
+
+/** Baja las imágenes alrededor de lo elegido (o del principio de la lista). */
+function hydrateAround(node: HTMLElement | null): void {
+  const rows = [...rowsEl.querySelectorAll<HTMLElement>(':scope > .row:not(.skeleton)')];
+  const current = node?.closest<HTMLElement>('.row') ?? null;
+  const index = current ? Math.max(0, rows.indexOf(current)) : 0;
+  const column = current && node?.parentElement ? Math.max(0, [...node.parentElement.children].indexOf(node)) : 0;
+  for (let r = Math.max(0, index - 1); r <= Math.min(rows.length - 1, index + ROWS_AHEAD); r++) {
+    const cards = rows[r]?.querySelector(':scope > .track')?.children;
+    if (!cards) continue;
+    const upTo = Math.min(cards.length, (r === index ? column : 0) + DRAW_AHEAD);
+    for (let c = 0; c < upTo; c++) {
+      const card = cards[c];
+      if (card) hydrateCard(card);
+    }
+  }
+}
+
 function makeCard(item: Contracts.LibraryTitle, progress?: ProgressEntry): HTMLButtonElement {
   const card = document.createElement('button');
   card.type = 'button';
@@ -414,11 +556,36 @@ function makeCard(item: Contracts.LibraryTitle, progress?: ProgressEntry): HTMLB
   poster.className = 'poster';
   poster.width = 148;
   poster.height = 222;
-  poster.loading = 'lazy';
+  // La imagen se pide recién cuando está cerca del foco (hydrateAround), con tiempo de sobra para
+  // decodificarse antes de que la fila se deslice hasta ella.
+  poster.loading = 'eager';
   poster.decoding = 'async';
   poster.alt = '';
-  if (item.poster) poster.src = item.poster;
-  wrap.append(poster);
+  // Mientras llega la imagen, un brillo de carga; cuando llega, aparece con un fundido. Sin imagen
+  // (o si falla), el nombre sobre un fondo, en vez de un hueco.
+  const shimmer = document.createElement('span');
+  shimmer.className = 'shimmer';
+  const ready = (): void => {
+    poster.classList.add('loaded');
+    wrap.classList.add('is-ready');
+    setTimeout(() => { shimmer.remove(); }, 450);
+  };
+  const fallback = (): void => {
+    const label = document.createElement('span');
+    label.className = 'poster-fallback';
+    label.textContent = item.title;
+    wrap.append(label);
+    wrap.classList.add('is-ready');
+    shimmer.remove();
+  };
+  poster.addEventListener('load', ready, { once: true });
+  poster.addEventListener('error', fallback, { once: true });
+  wrap.append(shimmer, poster);
+  if (item.poster) {
+    poster.dataset['src'] = imageUrl(item.poster);
+  } else {
+    fallback();
+  }
   if (progress && progress.d > 0) {
     const bar = document.createElement('span');
     bar.className = 'watch';
@@ -454,9 +621,11 @@ function appendRow(name: string, cards: readonly HTMLElement[]): void {
 
 function renderHome(): void {
   rowsEl.replaceChildren();
+  placed = new Set();
   const recent = recentProgress();
   if (recent.length) appendRow('Continuar viendo', recent.map((entry) => makeCard(entryTitle(entry), entry)));
-  for (const row of catalogRows) appendRow(row.name, row.items.map((item) => makeCard(item)));
+  for (const row of catalogRows) appendRow(row.name, row.items.map((item) => cardFor(item)));
+  hydrateAround(null);
   const uniqueCount = new Set(catalogRows.flatMap((row) => row.items).map((item) => `${item.type}:${item.id}`)).size;
   setStatus(uniqueCount ? `${uniqueCount} títulos · Audio o subtítulos en español · Catálogo FrameX` : 'No hay títulos para mostrar.');
   resetRows();
@@ -470,10 +639,16 @@ function renderHome(): void {
  */
 function renderResults(items: readonly Contracts.LibraryTitle[], query: string, approximate: string | null): void {
   rowsEl.replaceChildren();
+  placed = new Set();
   const movies = items.filter((item) => item.type === 'movie');
   const series = items.filter((item) => item.type === 'tv');
-  appendRow(movies.length && series.length ? 'Películas' : `Resultados para “${approximate ?? query}”`, movies.map((item) => makeCard(item)));
-  appendRow(movies.length ? 'Series' : `Resultados para “${approximate ?? query}”`, series.map((item) => makeCard(item)));
+  const both = movies.length > 0 && series.length > 0;
+  const fallback = `Resultados para “${approximate ?? query}”`;
+  // Primero la fila del mejor resultado (el servicio ya los ordenó): "breaking bad" → la serie, no un corto.
+  const rows: [string, readonly Contracts.LibraryTitle[]][] = [[both ? 'Películas' : fallback, movies], [both ? 'Series' : fallback, series]];
+  if (items[0]?.type === 'tv') rows.reverse();
+  for (const [name, list] of rows) appendRow(name, list.map((item) => cardFor(item)));
+  hydrateAround(null);
   setStatus(!items.length ? `No se encontraron títulos para “${query}”.`
     : approximate ? `Nada exacto para “${query}”: resultados parecidos a “${approximate}”.`
       : `${items.length} resultados para “${query}” · Se reproduce en español.`);
@@ -482,8 +657,38 @@ function renderResults(items: readonly Contracts.LibraryTitle[], query: string, 
   if (document.activeElement !== search) focusInitial();
 }
 
+/** Mientras carga el catálogo: filas "esqueleto" con brillo de carga, en vez de una pantalla vacía. */
+function renderSkeleton(): void {
+  if (rowsEl.children.length > 0) return;
+  for (let row = 0; row < 3; row++) {
+    const section = document.createElement('section');
+    section.className = 'row skeleton';
+    section.style.setProperty('--i', String(row));
+    const heading = document.createElement('h2');
+    const bar = document.createElement('span');
+    bar.className = 'bar';
+    heading.append(bar);
+    const track = document.createElement('div');
+    track.className = 'track';
+    for (let card = 0; card < 9; card++) {
+      const placeholder = document.createElement('span');
+      placeholder.className = 'card';
+      const wrap = document.createElement('span');
+      wrap.className = 'poster-wrap';
+      const shimmer = document.createElement('span');
+      shimmer.className = 'shimmer';
+      wrap.append(shimmer);
+      placeholder.append(wrap);
+      track.append(placeholder);
+    }
+    section.append(heading, track);
+    rowsEl.append(section);
+  }
+}
+
 /** Lista nueva: vuelve al principio y sin fila activa. */
 function resetRows(): void {
+  rowsEl.classList.remove('is-loading');
   rowsScroll.style.transform = '';
   activeRow?.classList.remove('is-active');
   activeRow = null;
@@ -508,6 +713,7 @@ async function loadHome(): Promise<void> {
   if (document.activeElement !== search) search.value = '';
   catalogHero = null;
   setStatus('Cargando catálogo…');
+  renderSkeleton();
   try {
     const reply = await api('home');
     if (token !== catalogToken) return;
@@ -531,12 +737,16 @@ async function runSearch(query: string): Promise<void> {
   searchMode = true;
   setStatus(`Buscando “${query}”…`);
   searchForm.classList.add('is-busy');
+  // Lo que había se atenúa mientras busca (no desaparece de golpe); si no había nada, esqueletos.
+  if (rowsEl.children.length > 0) rowsEl.classList.add('is-loading');
+  else renderSkeleton();
   try {
     const reply = await api('search', { q: query }, abort.signal);
     if (token !== catalogToken) return;
     renderResults(reply.items ?? [], query, reply.approximate ?? null);
   } catch (error) {
     if (token !== catalogToken || abort.signal.aborted) return;
+    rowsEl.classList.remove('is-loading');
     setStatus(errorText(error));
   } finally {
     if (token === catalogToken) searchForm.classList.remove('is-busy');
@@ -587,8 +797,11 @@ function moveIn(rows: readonly HTMLElement[][], direction: 'up' | 'down' | 'left
     return;
   }
   if (direction === 'left' || direction === 'right') {
-    const next = rows[position.row]?.[position.col + (direction === 'right' ? 1 : -1)];
+    const row = rows[position.row] ?? [];
+    const next = row[position.col + (direction === 'right' ? 1 : -1)];
     if (next) focusElement(next);
+    // Al final de una fila del catálogo, a la derecha se vuelve al principio (la fila se desliza de vuelta).
+    else if (direction === 'right' && active && isCatalogRow(row) && row.length > 1) focusElement(row[0] ?? null);
     else if (active) bump(active, direction);
     return;
   }
@@ -600,11 +813,17 @@ function moveIn(rows: readonly HTMLElement[][], direction: 'up' | 'down' | 'left
   focusElement(entryPoint(target, active));
 }
 
+/** Una fila de tarjetas del catálogo (las que se deslizan enteras). */
+function isCatalogRow(row: readonly HTMLElement[]): boolean {
+  return row[0]?.parentElement?.classList.contains('track') === true;
+}
+
 /**
- * Al entrar a una fila: la tarjeta donde se había quedado (como Google TV); si nunca se visitó, la
- * que está más cerca en pantalla de la actual.
+ * Al entrar a una fila. En el catálogo, como en las plataformas de los Chromecast: desde el
+ * principio de la fila. En el resto (botones, la ficha): donde se había quedado o lo más cercano.
  */
 function entryPoint(target: readonly HTMLElement[], from: HTMLElement): HTMLElement {
+  if (isCatalogRow(target)) return target[0] as HTMLElement;
   const container = target[0]?.parentElement;
   const remembered = container ? rowMemory.get(container) : undefined;
   const saved = remembered === undefined ? undefined : container?.children[remembered];
@@ -666,10 +885,15 @@ async function loadSeason(season: number, token: number): Promise<void> {
   if (!item || item.type !== 'tv' || !currentDetails) return;
   currentSeason = season;
   episodesEl.replaceChildren();
-  const loading = document.createElement('p');
-  loading.className = 'status';
-  loading.textContent = 'Cargando episodios…';
-  episodesEl.append(loading);
+  // Episodios cargando: tres renglones "esqueleto" con brillo (no son elegibles con el control).
+  for (let index = 0; index < 3; index++) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'episode skeleton';
+    const shimmer = document.createElement('span');
+    shimmer.className = 'shimmer';
+    placeholder.append(shimmer);
+    episodesEl.append(placeholder);
+  }
   rebuildDetailRows();
   try {
     const reply = await api('season', { id: item.id, type: 'tv', season: String(season) });
@@ -702,7 +926,7 @@ function renderEpisodes(): void {
     still.decoding = 'async';
     still.width = 132;
     still.height = 74;
-    if (episode.still) still.src = episode.still;
+    if (episode.still) still.src = imageUrl(episode.still);
     const body = document.createElement('span');
     body.className = 'ep-body';
     const title = document.createElement('span');
@@ -733,7 +957,7 @@ function rebuildDetailRows(): void {
     const chips = [...seasonBar.querySelectorAll<HTMLElement>('.season')];
     if (chips.length) detailRows.push(chips);
   }
-  for (const episode of episodesEl.querySelectorAll<HTMLElement>('.episode')) detailRows.push([episode]);
+  for (const episode of episodesEl.querySelectorAll<HTMLElement>('.episode:not(.skeleton)')) detailRows.push([episode]);
   if (!relatedEl.hidden) {
     const cards = [...relatedTrack.querySelectorAll<HTMLElement>('.card')];
     if (cards.length) detailRows.push(cards);
@@ -743,7 +967,11 @@ function rebuildDetailRows(): void {
 function renderRelated(items: readonly Contracts.LibraryTitle[]): void {
   relatedTrack.replaceChildren();
   relatedEl.hidden = items.length === 0;
-  for (const item of items) relatedTrack.append(makeCard(item));
+  for (const item of items) {
+    const card = makeCard(item);
+    hydrateCard(card); // la ficha muestra pocos: se bajan de una
+    relatedTrack.append(card);
+  }
   rebuildDetailRows();
 }
 
@@ -829,7 +1057,7 @@ async function openDetails(
   detailBody.scrollTop = 0;
   const image = item.backdrop || item.poster;
   if (image) {
-    detailImage.src = image;
+    detailImage.src = imageUrl(image);
     detailImage.hidden = false;
   } else {
     detailImage.removeAttribute('src');
@@ -864,6 +1092,7 @@ async function openDetails(
     detailStatus.textContent = '';
     detailPlay.disabled = false;
     rebuildDetailRows();
+    if (!options.autoplay) prefetchSource(item, item.type === 'tv' ? currentSeason : 0, item.type === 'tv' ? (options.resume?.episode ?? 1) : 0);
     if (options.autoplay) {
       const season = item.type === 'tv' ? currentSeason : 0;
       const episode = item.type === 'tv' ? (options.resume?.episode ?? 1) : 0;
@@ -884,6 +1113,19 @@ async function openDetails(
       void startPlayback(item, season, episode, options.resume?.name ?? '');
     }
   }
+}
+
+/**
+ * Mientras se lee la ficha, el servicio ya busca la fuente de video (y la guarda un rato): al
+ * apretar "Reproducir" está lista. Si falla no importa: "Reproducir" la vuelve a buscar.
+ */
+function prefetchSource(item: Contracts.LibraryTitle, season: number, episode: number): void {
+  const params: Record<string, string> = { id: item.id, type: item.type };
+  if (item.type === 'tv') {
+    params['season'] = String(season);
+    params['episode'] = String(episode);
+  }
+  void api('resolve', params).catch(() => undefined);
 }
 
 function closeDetails(): void {
@@ -944,9 +1186,15 @@ function applySubtitleMode(): void {
   }
 }
 
-function addTracks(): void {
+/**
+ * Los subtítulos de la fuente (el servicio sólo manda los que están en español, primero los latinos).
+ * Se activa el primero, salvo que el audio ya sea en español (ahí quedan para el botón Subtítulos).
+ * Antes se buscaba el idioma "es…" y, si venía como "spanish" o "spa", no se mostraba ninguno.
+ */
+function addTracks(source: Contracts.LibrarySource): void {
   for (const track of [...video.querySelectorAll('track')]) track.remove();
-  const preferred = currentSubtitles.findIndex((subtitle) => subtitle.lang.startsWith('es'));
+  const spanishAudio = isSpanish(source.audio ?? '') || (source.audioTracks ?? []).some((track) => isSpanish(track.lang) || isSpanish(track.label));
+  const preferred = currentSubtitles.length > 0 && !spanishAudio ? 0 : -1;
   currentSubtitles.forEach((subtitle, index) => {
     const track = document.createElement('track');
     track.kind = 'subtitles';
@@ -1014,7 +1262,7 @@ async function startVideo(source: Contracts.LibrarySource, subtitles: readonly C
         .filter(({ level }) => (level.height || 0) <= 1080 && (!level.videoCodec || /^avc/i.test(level.videoCodec)));
       if (compatible.length) engine.autoLevelCapping = compatible[compatible.length - 1]?.index ?? -1;
       selectSpanishAudio(engine, source);
-      addTracks();
+      addTracks(source);
       playVideo();
     });
     engine.on(Engine.Events.AUDIO_TRACKS_UPDATED, () => { selectSpanishAudio(engine, source); });
@@ -1025,7 +1273,7 @@ async function startVideo(source: Contracts.LibrarySource, subtitles: readonly C
     engine.attachMedia(video);
   } else {
     video.src = source.url;
-    addTracks();
+    addTracks(source);
     playVideo();
   }
 }
@@ -1380,9 +1628,18 @@ search.addEventListener('input', searchWhileTyping);
 
 // Deslizar con dos dedos (touchpad del celular) o la ruedita sobre el catálogo: recorre las filas.
 let wheelPending = 0;
+let wheelSideways = 0;
 rowsViewport.addEventListener('wheel', (event) => {
-  if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return; // horizontal: la fila se desplaza sola
   event.preventDefault();
+  // Hacia los costados: recorre la fila (las filas se deslizan solas, no tienen barra propia).
+  if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+    wheelSideways += event.deltaX;
+    while (Math.abs(wheelSideways) >= 100) {
+      moveIn(navRows, wheelSideways > 0 ? 'right' : 'left');
+      wheelSideways -= Math.sign(wheelSideways) * 100;
+    }
+    return;
+  }
   wheelPending += event.deltaY;
   while (Math.abs(wheelPending) >= 100) {
     moveIn(navRows, wheelPending > 0 ? 'down' : 'up');
@@ -1425,6 +1682,8 @@ player.addEventListener('pointermove', () => {
 }, { passive: true });
 
 video.addEventListener('playing', () => {
+  // La librería de video (hls.js) puede apagar las pistas de texto al arrancar: se vuelven a aplicar.
+  applySubtitleMode();
   playerStatus.textContent = '';
   toggle.textContent = '❚❚';
   showControls();
@@ -1485,6 +1744,24 @@ if ('mediaSession' in navigator) {
     // Algunos navegadores no admiten todos los atajos; el resto del reproductor sigue igual.
   }
 }
+
+// "Reproducir" deshabilitado = se está preparando (ficha cargando, buscando la fuente): un círculo
+// girando en el botón. Sigue solo al estado del botón, esté donde esté el código que lo cambia.
+const playSpinner = document.createElement('span');
+playSpinner.className = 'spinner';
+playSpinner.setAttribute('aria-hidden', 'true');
+new MutationObserver(() => {
+  const loading = detailPlay.disabled;
+  detailPlay.classList.toggle('is-loading', loading);
+  if (loading && !playSpinner.isConnected) detailPlay.prepend(playSpinner);
+  else if (!loading) playSpinner.remove();
+}).observe(detailPlay, { attributes: true, attributeFilter: ['disabled'] });
+
+// Reproductor: el círculo de carga en el centro mientras busca servidor o el video está cargando.
+const playerSpinner = byId<HTMLElement>('playerSpinner');
+new MutationObserver(() => {
+  playerSpinner.hidden = !/Buscando|Cargando|Probando|Conectando/i.test(playerStatus.textContent ?? '');
+}).observe(playerStatus, { childList: true, characterData: true, subtree: true });
 
 window.__controlTvBack = (): boolean => back();
 window.__controlTvTogglePlayback = (): boolean => {

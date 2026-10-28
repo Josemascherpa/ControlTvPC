@@ -133,6 +133,33 @@ carga la web del proveedor ni se ejecuta su JavaScript: sólo se validan los dat
 - **Límites:** la disponibilidad depende de cada servidor (pueden caerse o cambiar); la API es
   pública pero no oficial. No hay integración con plataformas de suscripción, cuentas ni DRM.
 
+### Red, caché y velocidad del Cine (medido)
+
+- **El IPv6 de esta casa está roto:** conexiones de 7 s o cortes de más de 15 s; por IPv4 tardan 50–100 ms.
+  Todo pedido del servicio sale por `http-pool.ts` (undici: sólo IPv4, DNS cacheado, keep-alive
+  60 s). Lo de Edge (segmentos de video) mejora con `optimizacion/preferir-ipv4.ps1` (admin, lo
+  corre el usuario). Resolver una fuente bajó de 10,8 s a 1 s.
+- **Caché del catálogo en disco** (`%LOCALAPPDATA%\ControlTvPC\cache\catalogo.json`) con
+  stale-while-revalidate: lo vencido se contesta al instante y se actualiza por detrás. El home
+  después de reiniciar tarda 95 ms (antes 820 ms). `/api/library` lleva ETag (304 si no cambió).
+  En la pantalla, las fichas y temporadas quedan memorizadas (`memo` en `web/cinema.ts`).
+- **Imágenes:** `/img?u=` → `image-cache.ts` (sólo `image.tmdb.org`), baja en WebP (TMDB lo da por
+  `Accept`, ~30 % menos que el JPG) y lo guarda en `cache\imagenes` con `immutable`. 12 pósters:
+  1,7 s directo de TMDB; 25 ms la primera vez por el servicio (precalentado) y 12 ms desde el disco.
+- **Listas estilo FlashList:** tarjetas recicladas (`cardPool`: mismo título = mismo nodo) y
+  distancia de dibujo (`hydrateAround`: se piden las imágenes de la fila elegida, la de arriba y las
+  dos de abajo, 14 por delante). No poner `content-visibility` en filas o tarjetas: recorta el
+  agrandado del foco.
+- **Sinopsis en español:** `translator.ts` (Google `dict-chrome-ex`, con `gtx` de respaldo), una
+  sola vez por texto y guardada en disco (`traducciones.json`). Con muchos pedidos juntos Google
+  contesta 429 durante un rato: el endpoint que limita descansa 15 min, la ficha pasa delante del
+  fondo (`urgent`) y el fondo encola como mucho 24. Los géneros se traducen con una tabla fija.
+- **Búsqueda:** dos páginas, se quitan los repetidos y se ordena por coincidencia (exacta >
+  empieza con > todas las palabras), sin póster al final; con un error de tipeo se prueba una
+  palabra más corta (`approximate`). La búsqueda del celular va al buscador del Cine (`__controlTvSearch`).
+- **Reproducir:** servidores escalonados cada 1,2 s (gana el primero que sirve), la fuente queda
+  15 min y se prebusca al abrir la ficha. Subtítulos SRT → VTT.
+
 ## Tele del HDMI
 
 `src/infrastructure/tv/`: identifica el tele por el EDID del HDMI, lo encuentra en el WiFi por SSDP/DLNA

@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { readFile } from 'fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
 import { basename, extname, join, normalize } from 'path';
@@ -44,6 +45,8 @@ export interface TvServerDeps<S extends { readonly token: string }> {
   readonly library?: (params: URLSearchParams) => Promise<Contracts.LibraryReply>;
   /** Trae un archivo de subtítulos (VTT) para el reproductor propio, sin depender de CORS. */
   readonly subtitle?: (url: string) => Promise<string | null>;
+  /** Imagen del catálogo guardada en el disco (sólo de TMDB). */
+  readonly image?: (url: string) => Promise<{ readonly file: string; readonly type: string } | null>;
   readonly hlsScript?: string;
   readonly iconPath: (appId: string) => Promise<string | null>;
   readonly log: Logger;
@@ -54,11 +57,17 @@ type AliveSocket = WebSocket & { alive?: boolean };
 type Reply =
   | { readonly kind: 'json'; readonly status: number; readonly body: unknown }
   | { readonly kind: 'file'; readonly file: string; readonly cache: string }
-  | { readonly kind: 'text'; readonly status: number; readonly type: string; readonly body: string; readonly cache: string };
+  | { readonly kind: 'text'; readonly status: number; readonly type: string; readonly body: string; readonly cache: string; readonly etag?: string };
 
 const json = (status: number, body: unknown): Reply => ({ kind: 'json', status, body });
 const fileReply = (file: string, cache: string): Reply => ({ kind: 'file', file, cache });
 const textReply = (body: string, type: string, cache: string): Reply => ({ kind: 'text', status: 200, type, body, cache });
+/** JSON con huella: si Edge ya tiene esa misma respuesta, se contesta 304 (sin cuerpo) y la reusa. */
+const etagged = (body: unknown): Reply => {
+  const text = JSON.stringify(body);
+  const etag = `"${createHash('sha1').update(text).digest('base64url').slice(0, 16)}"`;
+  return { kind: 'text', status: 200, type: 'application/json; charset=utf-8', body: text, cache: 'no-cache', etag };
+};
 
 /**
  * Servidor de la notebook. Para la red (el celular) habla como una Samsung; para la propia
@@ -116,7 +125,12 @@ export class TvServer<S extends { readonly token: string }> implements UiPublish
     const reply = await this.resolve(req);
     if (reply.kind === 'json') send(res, reply.status, reply.body);
     else if (reply.kind === 'text') {
-      res.writeHead(reply.status, { 'Content-Type': reply.type, 'Cache-Control': reply.cache });
+      if (reply.etag && req.headers['if-none-match'] === reply.etag) {
+        res.writeHead(304, { ETag: reply.etag, 'Cache-Control': reply.cache });
+        res.end();
+        return;
+      }
+      res.writeHead(reply.status, { 'Content-Type': reply.type, 'Cache-Control': reply.cache, ...(reply.etag ? { ETag: reply.etag } : {}) });
       res.end(reply.body);
     } else await serveFile(res, reply.file, reply.cache);
   }
@@ -129,7 +143,12 @@ export class TvServer<S extends { readonly token: string }> implements UiPublish
       return json(200, samsungDeviceInfo(d.deviceName(), d.localAddress() ?? '127.0.0.1', d.port, d.hdmiTv()));
     }
     if (!isLocal(req)) return json(403, { error: 'sólo desde la notebook' });
-    if (pathname === '/api/library' && d.library) return json(200, await d.library(new URL(req.url ?? '/', 'http://x').searchParams));
+    if (pathname === '/api/library' && d.library) return etagged(await d.library(new URL(req.url ?? '/', 'http://x').searchParams));
+    if (pathname === '/img' && d.image) {
+      const image = await d.image(new URL(req.url ?? '/', 'http://x').searchParams.get('u') ?? '');
+      // La misma dirección es siempre la misma imagen: Edge la guarda para siempre y no vuelve a pedirla.
+      return image ? fileReply(image.file, 'public, max-age=31536000, immutable') : json(404, { error: 'sin imagen' });
+    }
     if (pathname === '/api/subtitle' && d.subtitle) {
       const url = new URL(req.url ?? '/', 'http://x').searchParams.get('url') ?? '';
       const vtt = url ? await d.subtitle(url) : null;

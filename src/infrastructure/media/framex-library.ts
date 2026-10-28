@@ -1,5 +1,15 @@
+import { existsSync, readFileSync } from 'fs';
+import { mkdir, writeFile } from 'fs/promises';
+import { dirname } from 'path';
 import type { MediaLibrary } from '../../domain/media-library';
 import { asArray, asNullableNumber, asRecord, asString } from '../storage/json';
+import { pooledFetch } from './http-pool';
+import type { Translator } from './translator';
+
+/** Espera una traducción como mucho un rato: si tarda, se usa el texto original (no se demora la ficha). */
+function capped(task: Promise<string>, fallback: string, ms = 2500): Promise<string> {
+  return Promise.race([task, new Promise<string>((resolve) => { setTimeout(() => { resolve(fallback); }, ms).unref(); })]);
+}
 
 // Catálogo propio. La API pública de FrameX entrega metadatos (TMDB) y, por título, la lista de
 // servidores con una fuente HLS o MP4. Nunca se ejecuta JavaScript de terceros ni se reenvían URLs
@@ -7,12 +17,19 @@ import { asArray, asNullableNumber, asRecord, asString } from '../storage/json';
 const ORIGIN = 'https://api.framextv.xyz';
 const MAX_BYTES = 3 * 1024 * 1024;
 const SUBTITLE_BYTES = 512 * 1024;
-const CACHE_LIMIT = 48;
+const CACHE_LIMIT = 150;
 const MAX_PENDING = 4;
 const HOME_TTL = 5 * 60_000;
 const DETAIL_TTL = 10 * 60_000;
 const SEARCH_TTL = 2 * 60_000;
 const PROVIDER_TTL = 60_000;
+/** Una fuente encontrada sirve un rato (sus enlaces vencen): volver a "Reproducir" es instantáneo. */
+const STREAM_TTL = 15 * 60_000;
+/** Cada cuánto se suma el siguiente servidor si el anterior todavía no contestó. */
+const STAGGER_MS = 1200;
+/** Conexión "tibia": un pedido liviano cada tanto mientras se usa el Cine, y hasta cuándo. */
+const WARM_EVERY_MS = 45_000;
+const WARM_FOR_MS = 10 * 60_000;
 const RAIL_ITEMS = 20;
 const SEARCH_ITEMS = 40;
 /** La búsqueda tiene que contestar rápido: si la primera vez la API no responde en esto, se reintenta una vez. */
@@ -28,6 +45,15 @@ const RAILS = [
   ['action_movies', 'Acción'], ['comedy_movies', 'Comedia'],
   ['scifi_movies', 'Ciencia ficción'], ['thriller_movies', 'Suspenso'],
 ] as const;
+/** Los géneros de TMDB (vienen en inglés): fijos, se traducen sin consultar a nadie. */
+const GENRES_ES: Readonly<Record<string, string>> = {
+  'Action': 'Acción', 'Adventure': 'Aventura', 'Animation': 'Animación', 'Comedy': 'Comedia', 'Crime': 'Crimen',
+  'Documentary': 'Documental', 'Drama': 'Drama', 'Family': 'Familia', 'Fantasy': 'Fantasía', 'History': 'Historia',
+  'Horror': 'Terror', 'Music': 'Música', 'Mystery': 'Misterio', 'Romance': 'Romance', 'Science Fiction': 'Ciencia ficción',
+  'TV Movie': 'Película de TV', 'Thriller': 'Suspenso', 'War': 'Bélica', 'Western': 'Western',
+  'Action & Adventure': 'Acción y aventura', 'Kids': 'Infantil', 'News': 'Noticias', 'Reality': 'Reality',
+  'Sci-Fi & Fantasy': 'Ciencia ficción y fantasía', 'Soap': 'Telenovela', 'Talk': 'Entrevistas', 'War & Politics': 'Bélica y política',
+};
 const ID = /^\d{1,12}$/;
 const PROVIDER_ID = /^[a-z_]{1,40}$/;
 const SUBTITLE_HOST = /(^|\.)(strem\.io|vdrk\.site|opensubtitles\.org|opensubtitles\.com)$/;
@@ -125,6 +151,18 @@ function unique<T>(items: readonly T[], key: (item: T) => string): T[] {
   });
 }
 
+const SRT_TIME = /(\d{1,2}:\d{2}:\d{2}),(\d{3})/g;
+
+/**
+ * SRT → WebVTT: encabezado y tiempos con punto ("00:01:09,069" → "00:01:09.069"). Si no parece un
+ * SRT (no tiene ninguna línea de tiempos), null.
+ */
+function srtToVtt(text: string): string | null {
+  const body = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
+  if (!/^\d+\n\d{1,2}:\d{2}:\d{2},\d{3} --> /m.test(body)) return null;
+  return `WEBVTT\n\n${body.replace(SRT_TIME, '$1.$2')}\n`;
+}
+
 /** Para comparar textos: minúsculas, sin tildes ni signos ("Rápidos & Furiosos" → "rapidos furiosos"). */
 function fold(value: string): string {
   return value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9ñ]+/g, ' ').trim();
@@ -172,10 +210,84 @@ function providerIds(value: unknown): string[] {
 export class FramexLibrary implements MediaLibrary {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly pending = new Map<string, Promise<Contracts.LibraryReply>>();
+  /** Fuentes ya encontradas (por título/episodio), para reproducir al instante. */
+  private readonly resolved = new Map<string, CacheEntry>();
+  private readonly resolving = new Map<string, Promise<Contracts.LibraryReply>>();
 
-  constructor(private readonly request: typeof fetch = fetch) {}
+  private lastUse = 0;
+  private warmTimer: NodeJS.Timeout | null = null;
+
+  private saveTimer: NodeJS.Timeout | null = null;
+
+  constructor(
+    private readonly request: typeof fetch = pooledFetch,
+    private readonly translator: Translator | null = null,
+    /** Archivo donde queda el catálogo entre arranques (null: sólo en memoria). */
+    private readonly store: string | null = null,
+  ) {
+    this.restore();
+  }
+
+  /**
+   * Las sinopsis en español. Ficha y episodios esperan la traducción (como mucho un rato; después
+   * salen de la memoria al instante). En catálogo y búsqueda se usan las ya traducidas y el resto se
+   * traduce en segundo plano, sin demorar la respuesta.
+   */
+  private async inSpanish(reply: Contracts.LibraryReply, op: string): Promise<Contracts.LibraryReply> {
+    const translator = this.translator;
+    if (!translator || reply.error) return reply;
+    const swap = <T extends Contracts.LibraryTitle>(item: T): T => {
+      const spanish = translator.known(item.overview);
+      return spanish ? { ...item, overview: spanish } : item;
+    };
+    if (op === 'home' || op === 'search') {
+      translator.warm([
+        ...(reply.hero ? [reply.hero.overview] : []),
+        ...(reply.rows ?? []).flatMap((row) => row.items.map((item) => item.overview)),
+        ...(reply.items ?? []).map((item) => item.overview),
+      ]);
+      return {
+        ...reply,
+        ...(reply.hero ? { hero: swap(reply.hero) } : {}),
+        ...(reply.rows ? { rows: reply.rows.map((row) => ({ ...row, items: row.items.map(swap) })) } : {}),
+        ...(reply.items ? { items: reply.items.map(swap) } : {}),
+      };
+    }
+    if (op === 'details' && reply.details) {
+      const overview = await capped(translator.translate(reply.details.overview, true), reply.details.overview);
+      return { ...reply, details: { ...reply.details, overview, related: (reply.details.related ?? []).map(swap) } };
+    }
+    if (op === 'season' && reply.episodes) {
+      const episodes = reply.episodes;
+      const overviews = await Promise.all(episodes.map((episode) => capped(translator.translate(episode.overview, true), episode.overview)));
+      return { ...reply, episodes: episodes.map((episode, index) => ({ ...episode, overview: overviews[index] ?? episode.overview })) };
+    }
+    return reply;
+  }
+
+  /**
+   * Mientras se usa el Cine (pedidos en los últimos 10 min), la conexión con la API se mantiene
+   * abierta con un pedido liviano cada 45 s: la próxima búsqueda o "Reproducir" no espera a abrirla.
+   */
+  private keepWarm(): void {
+    this.lastUse = Date.now();
+    if (this.warmTimer) return;
+    this.warmTimer = setInterval(() => {
+      if (Date.now() - this.lastUse > WARM_FOR_MS) {
+        if (this.warmTimer) clearInterval(this.warmTimer);
+        this.warmTimer = null;
+        return;
+      }
+      // Directo a la red (sin la memoria de 60 s): si no, a veces no sale ningún pedido y la conexión se cierra.
+      void this.json(`${ORIGIN}/api/providers`, 8000).then((raw) => {
+        this.remember(`${ORIGIN}/api/providers`, PROVIDER_TTL, this.providers(asRecord(raw)));
+      }, () => undefined);
+    }, WARM_EVERY_MS);
+    this.warmTimer.unref();
+  }
 
   async query(params: URLSearchParams): Promise<Contracts.LibraryReply> {
+    if (this.request === pooledFetch) this.keepWarm();
     const op = params.get('op') ?? 'home';
     if (op === 'resolve') return this.resolve(params);
     if (op === 'stream') {
@@ -183,10 +295,15 @@ export class FramexLibrary implements MediaLibrary {
       if (!isStreamPlan(plan)) return plan;
       return this.stream(plan, plan.provider).catch(() => rejected(NETWORK_ERROR));
     }
-    if (op === 'search') return this.search(params);
+    if (op === 'search') return this.inSpanish(await this.search(params), op);
+    if (op === 'translate') {
+      const text = (params.get('text') ?? '').trim().slice(0, 1800);
+      if (!text) return rejected('No hay texto para traducir.');
+      return { translated: this.translator ? await this.translator.translate(text, true) : text };
+    }
     const plan = this.plan(op, params);
     if (!isPlanned(plan)) return plan;
-    return this.cached(`${ORIGIN}${plan.path}?${plan.query.toString()}`, plan.ttl, () => this.load(plan));
+    return this.inSpanish(await this.cached(`${ORIGIN}${plan.path}?${plan.query.toString()}`, plan.ttl, () => this.load(plan)), op);
   }
 
   /**
@@ -237,7 +354,10 @@ export class FramexLibrary implements MediaLibrary {
     });
     if (!response.ok || !response.body) return null;
     const text = await this.readText(response.body, SUBTITLE_BYTES);
-    return /^\uFEFF?WEBVTT/.test(text) ? text : null;
+    if (/^\uFEFF?WEBVTT/.test(text)) return text;
+    // Muchos subt\u00EDtulos (los de series, de strem.io) vienen en SRT: el navegador s\u00F3lo entiende
+    // WebVTT. Se convierten (antes se rechazaban y la serie quedaba sin subt\u00EDtulos).
+    return srtToVtt(text);
   }
 
   // ---------- Rutas ----------
@@ -293,8 +413,18 @@ export class FramexLibrary implements MediaLibrary {
       return hit.value;
     }
     const existing = this.pending.get(key);
+    // Vencido pero guardado (catálogo, fichas, búsquedas): se contesta YA con lo guardado y se
+    // actualiza por detrás; si cambió, la próxima vez ya sale lo nuevo ("stale-while-revalidate").
+    if (hit && ttl > 0) {
+      if (!existing && this.pending.size < MAX_PENDING) void this.refresh(key, ttl, load);
+      return hit.value;
+    }
     if (existing) return existing;
     if (this.pending.size >= MAX_PENDING) return rejected('Hay varias consultas en curso. Probá de nuevo en unos segundos.');
+    return this.refresh(key, ttl, load);
+  }
+
+  private refresh(key: string, ttl: number, load: () => Promise<Contracts.LibraryReply>): Promise<Contracts.LibraryReply> {
     const task = load().then((value) => {
       if (!value.error) this.remember(key, ttl, value);
       return value;
@@ -308,6 +438,35 @@ export class FramexLibrary implements MediaLibrary {
     this.cache.delete(key);
     if (this.cache.size >= CACHE_LIMIT) this.cache.delete(this.cache.keys().next().value ?? '');
     this.cache.set(key, { value, until: Date.now() + ttl });
+    if (ttl > 0) this.saveSoon();
+  }
+
+  /** Lo guardado en el disco de la vez anterior (vencido: se muestra y se actualiza por detrás). */
+  private restore(): void {
+    if (!this.store || !existsSync(this.store)) return;
+    try {
+      for (const entry of asArray(JSON.parse(readFileSync(this.store, 'utf8')) as unknown)) {
+        const [key, value] = asArray(entry);
+        if (typeof key === 'string' && value && typeof value === 'object') {
+          this.cache.set(key, { until: 0, value: value as Contracts.LibraryReply });
+        }
+      }
+    } catch {
+      // un archivo roto sólo significa empezar sin catálogo guardado
+    }
+  }
+
+  private saveSoon(): void {
+    const store = this.store;
+    if (!store || this.saveTimer) return;
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      const entries = [...this.cache].map(([key, entry]) => [key, entry.value]);
+      void mkdir(dirname(store), { recursive: true })
+        .then(() => writeFile(store, JSON.stringify(entries)))
+        .catch(() => undefined);
+    }, 3000);
+    this.saveTimer.unref();
   }
 
   private async load(plan: Planned): Promise<Contracts.LibraryReply> {
@@ -378,7 +537,8 @@ export class FramexLibrary implements MediaLibrary {
       const name = clean(person['name'], 80);
       return name ? [{ name, character: clean(person['character'], 80) }] : [];
     });
-    const genres = unique(asArray(raw['genres']).map((genre) => clean(genre, 40)).filter(Boolean), (genre) => genre);
+    const genres = unique(asArray(raw['genres']).map((genre) => clean(genre, 40)).filter(Boolean)
+      .map((genre) => GENRES_ES[genre] ?? genre), (genre) => genre);
     const related = unique(asArray(raw['similar']).flatMap((item) => {
       const title = this.title(asRecord(item), 0);
       return title ? [title] : [];
@@ -513,21 +673,61 @@ export class FramexLibrary implements MediaLibrary {
     if (!available.length) return rejected('No hay servidores disponibles ahora.');
     const candidates = available.filter((provider) => !exclude.has(provider.id)).slice(0, 5);
     if (!candidates.length) return rejected('No quedan más servidores para probar.');
-    const results = await Promise.all(candidates.map(async (provider): Promise<Contracts.LibraryReply | null> => {
-      try {
-        return await this.stream({ path: '/api/stream', query: this.streamQuery(params, provider.id), ttl: 0 }, provider.id);
-      } catch {
-        return null;
-      }
-    }));
-    for (const result of results) {
-      if (result && (result.sources?.length ?? 0) > 0) {
-        const others = available.filter((provider) => provider.id !== result.provider).map((provider) => provider.id);
-        return { ...result, alternates: unique(others, (value) => value) };
-      }
+    // Lo mismo pedido hace poco (o pedido por adelantado al abrir la ficha): al instante.
+    const key = `${this.streamQuery(params, '').toString()}|${[...exclude].sort().join(',')}`;
+    const hit = this.resolved.get(key);
+    if (hit && hit.until > Date.now()) return hit.value;
+    let pending = this.resolving.get(key);
+    if (!pending) {
+      pending = this.firstWorkingServer(params, candidates, available).finally(() => this.resolving.delete(key));
+      this.resolving.set(key, pending);
     }
-    const blockedByLanguage = results.some((result) => result?.error === SPANISH_ONLY_ERROR);
-    return rejected(blockedByLanguage ? SPANISH_ONLY_ERROR : 'Ningún servidor entregó una fuente compatible. Probá otro título.');
+    const value = await pending;
+    if (!value.error) this.resolved.set(key, { until: Date.now() + STREAM_TTL, value });
+    if (this.resolved.size > CACHE_LIMIT) this.resolved.delete(this.resolved.keys().next().value ?? '');
+    return value;
+  }
+
+  /**
+   * El primer servidor (en orden de preferencia) que entregue una fuente en español. Se consultan de
+   * a uno, escalonados: el preferido arranca solo y, si no contestó en un rato, se suma el siguiente.
+   * El que contesta primero gana; los que todavía no arrancaron ya no se consultan. Antes se
+   * consultaban 5 a la vez y se esperaba a todos (medido: 10,8 s para una película).
+   */
+  private firstWorkingServer(
+    params: URLSearchParams, candidates: readonly Contracts.LibraryProvider[], available: readonly Contracts.LibraryProvider[],
+  ): Promise<Contracts.LibraryReply> {
+    return new Promise((done) => {
+      let finished = false;
+      let pendingCount = candidates.length;
+      const failures: (Contracts.LibraryReply | null)[] = [];
+      const timers: NodeJS.Timeout[] = [];
+      const finish = (reply: Contracts.LibraryReply): void => {
+        if (finished) return;
+        finished = true;
+        for (const timer of timers) clearTimeout(timer);
+        done(reply);
+      };
+      candidates.forEach((provider, index) => {
+        timers.push(setTimeout(() => {
+          if (finished) return;
+          void this.stream({ path: '/api/stream', query: this.streamQuery(params, provider.id), ttl: 0 }, provider.id)
+            .catch((): Contracts.LibraryReply | null => null)
+            .then((result) => {
+              if (result && (result.sources?.length ?? 0) > 0) {
+                const others = available.filter((other) => other.id !== result.provider).map((other) => other.id);
+                finish({ ...result, alternates: unique(others, (value) => value) });
+                return;
+              }
+              failures.push(result);
+              pendingCount--;
+              if (pendingCount > 0) return;
+              const blockedByLanguage = failures.some((failure) => failure?.error === SPANISH_ONLY_ERROR);
+              finish(rejected(blockedByLanguage ? SPANISH_ONLY_ERROR : 'Ningún servidor entregó una fuente compatible. Probá otro título.'));
+            });
+        }, index * STAGGER_MS));
+      });
+    });
   }
 
   private title(raw: Readonly<Record<string, unknown>>, overviewLength: number): Contracts.LibraryTitle | null {

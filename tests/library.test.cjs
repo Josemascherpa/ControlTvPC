@@ -178,7 +178,9 @@ test('biblioteca: subtítulos sólo desde hosts permitidos, por HTTPS y con cabe
   assert.equal(await library.subtitle('http://cache.vdrk.site/es'), null);
   assert.equal(fetched.length, 2);
   const broken = new FramexLibrary(async () => new Response('1\n00:00:01,000 --> 00:00:02,000\nHola'));
-  assert.equal(await broken.subtitle('https://cache.vdrk.site/es/file'), null, 'No reenvía SRT como si fuera VTT');
+  assert.equal(await broken.subtitle('https://cache.vdrk.site/es/file'), 'WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\nHola\n', 'El SRT (series de strem.io) se convierte a WebVTT, que es lo que entiende el navegador');
+  const junk = new FramexLibrary(async () => new Response('<html>no es un subtítulo</html>'));
+  assert.equal(await junk.subtitle('https://cache.vdrk.site/es/file'), null, 'Lo que no es VTT ni SRT no se reenvía');
 });
 
 test('biblioteca: "Reproducir" prueba servidores en paralelo y sólo acepta los que tienen español', async () => {

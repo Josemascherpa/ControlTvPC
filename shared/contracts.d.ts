@@ -86,6 +86,8 @@ declare namespace Contracts {
     readonly alternates?: readonly string[];
     /** Búsqueda sin resultados exactos: se muestran los de una búsqueda parecida (ej. "avengrs" → "aveng"). */
     readonly approximate?: string;
+    /** Respuesta de op=translate: el texto en español. */
+    readonly translated?: string;
     readonly error?: string;
   }
   interface VolumeState {

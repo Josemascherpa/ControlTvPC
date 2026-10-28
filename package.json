@@ -17,6 +17,7 @@
   "dependencies": {
     "hls.js": "1.7.3",
     "koffi": "2.9.0",
+    "undici": "6.21.0",
     "ws": "8.22.0"
   },
   "devDependencies": {

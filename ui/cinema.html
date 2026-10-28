@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/cinema.css">
 </head>
 <body>
+<div id="activity" aria-hidden="true"></div>
 <header id="topbar">
   <a class="brand" id="brand" href="/" aria-label="Volver al inicio de ControlTv">
     <span class="brand-dot"></span><span class="brand-name">Cine</span>
@@ -95,6 +96,7 @@
     </div>
   </div>
   <div id="playerCenter" class="player-center">
+    <span id="playerSpinner" class="spinner" hidden aria-hidden="true"></span>
     <p id="playerStatus" class="status" role="status"></p>
     <button id="retryBtn" class="btn primary" type="button" hidden>Probar otro servidor</button>
   </div>
