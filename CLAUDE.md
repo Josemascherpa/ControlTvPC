@@ -101,8 +101,9 @@ ejecuta su JavaScript: sólo se validan los datos y las fuentes.
   `/api/trending?type=`. Anime, plataformas y "en español" necesitan TMDB (sin clave se omiten). Los
   ids de TMDB son los mismos de FrameX. Filas de a 3 consultas, guardadas 30 min (SWR).
 - **Destacado compacto:** recorriendo filas se esconden sus botones y entran 3 filas enteras en 720 px
-  (`--rows-top`; alturas fijas del texto; `heroGap()` baja la lista en el destacado/menú). Las tarjetas
-  del catálogo no muestran nombre (está en el destacado). El texto cambia en dos tiempos (`is-changing`).
+  (`--rows-top`; alturas fijas del texto; `heroGap()` baja la lista en el destacado/menú). En el catálogo
+  el nombre va chiquito SOBRE la tarjeta (abajo, con degradé): debajo sumaría alto y no entrarían 3 filas.
+  Sin brillo que cruza la tarjeta (al usuario no le gustó). El texto cambia en dos tiempos (`is-changing`).
 - **Catálogo:** 8 filas de 20 títulos + destacado. Tarjetas apaisadas con el backdrop `w780` (la misma
   imagen del destacado: se baja una vez); episodios `w342`. TMDB entrega WebP por `Accept`.
 - **Caché** (`store.ts`, IndexedDB, base `cine`): catálogo, fichas y búsquedas con stale-while-revalidate

@@ -103,24 +103,25 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 /* En la fila elegida, las demás tarjetas bajan un poco el brillo: el foco resalta y el cambio de una a otra se nota suave. */
 .row.is-active .track:focus-within .card:not(:focus){opacity:.72}
 .poster-wrap{position:relative;display:block;width:var(--card-w);height:var(--card-h);border-radius:12px;box-shadow:0 6px 16px #0006;overflow:hidden;transition:box-shadow .45s ease}
-/* Brillo que cruza la tarjeta al elegirla: acompaña el paso de una tarjeta a otra. */
-.poster-wrap::before{content:"";position:absolute;inset:-20% auto -20% 0;width:45%;z-index:2;pointer-events:none;opacity:0;
-  background:linear-gradient(100deg,#fff0 0%,#ffffff2e 50%,#fff0 100%);transform:translate3d(-120%,0,0) skewX(-12deg)}
-.card.just-focused:focus .poster-wrap::before{animation:shine .9s .08s var(--glide) both}
-@keyframes shine{0%{opacity:1;transform:translate3d(-120%,0,0) skewX(-12deg)}100%{opacity:1;transform:translate3d(330%,0,0) skewX(-12deg)}}
 /* Borde y sombra de la tarjeta elegida: una capa aparte que sólo cambia de opacidad (no se redibuja). */
 .poster-wrap::after{content:"";position:absolute;inset:0;border-radius:12px;box-shadow:inset 0 0 0 3px #fff;z-index:3;
   opacity:0;transform:scale(1.05);transition:opacity .3s ease,transform .45s var(--glide);pointer-events:none}
 .poster{display:block;width:var(--card-w);height:var(--card-h);border-radius:12px;object-fit:cover;object-position:center 25%;background:linear-gradient(150deg,#1b232c,#0e1318)}
 .card .name{display:block;margin-top:10px;font-size:12.5px;line-height:1.25;color:#8f9ca8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .25s,transform .42s var(--glide)}
-.card .watch{position:absolute;left:10px;right:10px;bottom:10px;height:4px;border-radius:2px;background:#000000a6;overflow:hidden}
+.card .watch{position:absolute;z-index:3;left:10px;right:10px;bottom:10px;height:4px;border-radius:2px;background:#000000a6;overflow:hidden}
 .card .watch i{display:block;height:100%;background:var(--accent);border-radius:2px;transform-origin:left}
 .card:hover .poster-wrap::after{opacity:.45;transform:none}
 /* La tarjeta elegida: se agranda con un pequeño rebote, se eleva y gana borde y sombra. */
 .card:focus{outline:none;transform:translate3d(0,-4px,0) scale(1.08);z-index:3;transition:transform .5s var(--spring),opacity .3s ease}
 .card:focus .poster-wrap{box-shadow:0 16px 34px #000c}
-/* En el catálogo el nombre ya está en el destacado de arriba: las filas quedan más bajas y entran tres. */
-.rows .card .name{display:none}
+/* En el catálogo el nombre va chiquito sobre la tarjeta (abajo, con un degradé): no suma alto y siguen
+   entrando tres filas. Sin imagen, el nombre ya está en el fondo de la tarjeta. */
+.rows .card .name{position:absolute;left:0;right:0;bottom:0;z-index:2;margin:0;padding:22px 12px 9px;border-radius:0 0 12px 12px;
+  font-size:12px;font-weight:600;color:#e9eef2;text-shadow:0 1px 3px #000;background:linear-gradient(0deg,#000000c7,#00000000);pointer-events:none}
+.rows .card:focus .name{font-weight:700;color:#fff}
+.rows .card:has(.poster-fallback) .name{display:none}
+/* "Continuar viendo": el nombre arriba de la barrita de progreso. */
+.rows .card:has(.watch) .name{padding-bottom:20px}
 /* Las categorías: tarjetas con el nombre del género. */
 .genre-tile .poster-wrap{display:flex;align-items:flex-end;padding:14px 16px;background:linear-gradient(150deg,#22303d,#0f151b 70%);font-size:19px;font-weight:800;letter-spacing:-.3px;color:#eef3f6}
 .genre-tile.is-current .poster-wrap{background:linear-gradient(150deg,#1f6f59,#0f2b24 75%);color:#fff}

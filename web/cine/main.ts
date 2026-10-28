@@ -254,13 +254,7 @@ function subtitleLabel(value: string): string {
  */
 function focusElement(node: HTMLElement | null): void {
   if (!node) return;
-  const previous = document.activeElement;
   node.focus({ preventScroll: true });
-  if (previous !== node && node.classList.contains('card')) {
-    node.classList.remove('just-focused');
-    void node.offsetWidth; // reinicia la animación del borde
-    node.classList.add('just-focused');
-  }
   revealInTrack(node);
   const row = node.closest('.row, .related, .seasons, .chips, .actions, #topbar, .controls-row, .legal-body');
   if (row !== activeRow) {
@@ -545,7 +539,7 @@ function cardFor(item: Contracts.LibraryTitle): HTMLButtonElement {
   const reused = cardPool.get(key);
   const known = reused ? cardItems.get(reused) : undefined;
   if (reused && !placed.has(reused) && known?.poster === item.poster && known.title === item.title) {
-    reused.classList.remove('just-focused', 'pressed');
+    reused.classList.remove('pressed');
     placed.add(reused);
     return reused;
   }
