@@ -23,23 +23,30 @@
 </header>
 
 <main id="catalog">
+  <!-- Arriba: el título elegido (como Google TV). Dos imágenes que se turnan para cambiar con un fundido. -->
   <section id="hero" hidden>
-    <img id="heroImage" alt="" decoding="async">
+    <img id="heroImage" class="hero-image is-shown" alt="" decoding="async">
+    <img id="heroImageNext" class="hero-image" alt="" decoding="async">
     <div class="hero-shade"></div>
-    <div class="hero-copy">
-      <p class="eyebrow">Destacado</p>
+    <div class="hero-copy" id="heroCopy">
+      <p class="eyebrow" id="heroEyebrow">Destacado</p>
       <h1 id="heroTitle"></h1>
       <p class="meta" id="heroMeta"></p>
       <p class="overview" id="heroOverview"></p>
-      <div class="actions">
+      <div class="actions" id="heroActions">
         <button id="heroPlay" class="btn primary" type="button"><span class="ico">▶</span>Reproducir</button>
         <button id="heroInfo" class="btn" type="button"><span class="ico">ⓘ</span>Más información</button>
       </div>
     </div>
   </section>
-  <section id="rows" class="rows" aria-label="Catálogo"></section>
-  <p id="status" class="status" role="status">Cargando catálogo…</p>
-  <p id="hint" class="hint">← → moverte · OK elegir · Atrás volver · Buscá con el teclado del celular</p>
+  <!-- Abajo: las filas. Al subir o bajar, se desliza la lista entera (suave, sin mover la página). -->
+  <div id="rowsViewport" class="rows-viewport">
+    <div id="rowsScroll" class="rows-scroll">
+      <section id="rows" class="rows" aria-label="Catálogo"></section>
+      <p id="status" class="status" role="status">Cargando catálogo…</p>
+      <p id="hint" class="hint">Flechas para moverte · OK para elegir · Atrás para volver · Escribí en el celular para buscar</p>
+    </div>
+  </div>
 </main>
 
 <section id="details" hidden aria-label="Ficha del título">

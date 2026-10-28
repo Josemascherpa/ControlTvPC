@@ -1,7 +1,7 @@
 import type { TvApp } from '../../domain/apps';
 import { WEB_APP } from '../../domain/apps';
 import type { AppCatalog, Logger, PageKey, TvScreen } from '../../domain/ports';
-import { sameSite, toTvUrl } from '../../domain/urls';
+import { googleSearchQuery, sameSite, toTvUrl } from '../../domain/urls';
 import type { KeyEventParams } from './cdp-protocol';
 import type { EdgeConnection } from './edge-connection';
 
@@ -76,11 +76,29 @@ export class EdgeScreen implements TvScreen {
   }
 
   async openUrl(rawUrl: string): Promise<void> {
+    // "Buscar" en el celular manda una búsqueda de Google. Si la página abierta tiene buscador propio
+    // (el Cine), se busca ahí mismo en vez de salir a Google.
+    const query = googleSearchQuery(rawUrl);
+    if (query && !this.atHome && (await this.searchInPage(query))) return;
     const url = toTvUrl(rawUrl);
     const app = this.apps.forUrl(url);
     // El "disfraz" de Smart TV sólo para la dirección principal de la app (ej. youtube.com/tv).
     const userAgent = app && url.startsWith(app.url.split('#')[0] ?? app.url) ? app.userAgent : null;
     await this.navigate(url, app ?? WEB_APP, userAgent);
+  }
+
+  /** true si la página abierta buscó por su cuenta (tiene `window.__controlTvSearch`). */
+  private async searchInPage(query: string): Promise<boolean> {
+    if (!this.edge.isReady) return false;
+    try {
+      const { result } = await this.edge.page('Runtime.evaluate', {
+        expression: `window.__controlTvSearch ? window.__controlTvSearch(${JSON.stringify(query)}) : false`,
+        returnByValue: true,
+      });
+      return result.value === true;
+    } catch {
+      return false;
+    }
   }
 
   /** "Atrás": cierra lo abierto, vuelve a la página anterior o, si no hay, al inicio. */

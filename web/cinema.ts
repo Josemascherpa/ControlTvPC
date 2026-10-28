@@ -50,7 +50,11 @@ const searchForm = byId<HTMLFormElement>('searchForm');
 const search = byId<HTMLInputElement>('search');
 const searchGo = byId<HTMLButtonElement>('searchGo');
 const hero = byId<HTMLElement>('hero');
-const heroImage = byId<HTMLImageElement>('heroImage');
+const heroImages = [byId<HTMLImageElement>('heroImage'), byId<HTMLImageElement>('heroImageNext')] as const;
+const heroCopy = byId<HTMLElement>('heroCopy');
+const heroEyebrow = byId<HTMLElement>('heroEyebrow');
+const rowsScroll = byId<HTMLElement>('rowsScroll');
+const rowsViewport = byId<HTMLElement>('rowsViewport');
 const heroTitle = byId<HTMLElement>('heroTitle');
 const heroMeta = byId<HTMLElement>('heroMeta');
 const heroOverview = byId<HTMLElement>('heroOverview');
@@ -108,7 +112,14 @@ let providersCache: readonly Contracts.LibraryProvider[] | null = null;
 let detailTrigger: HTMLElement | null = null;
 let navRows: HTMLElement[][] = [];
 let detailRows: HTMLElement[][] = [];
-let lastColumn = 0;
+/** Qué título muestra cada tarjeta (para el destacado de arriba). */
+const cardItems = new WeakMap<HTMLElement, Contracts.LibraryTitle>();
+/** En qué elemento quedó cada fila: al volver a ella, se vuelve ahí (como Google TV). */
+const rowMemory = new WeakMap<Element, number>();
+let activeRow: Element | null = null;
+let searchTimer = 0;
+let searchAbort: AbortController | null = null;
+const SEARCH_DELAY_MS = 450;
 
 let hls: Hls | null = null;
 let loadingHls: Promise<typeof Hls> | null = null;
@@ -130,9 +141,11 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : 'No se pudo cargar. Probá de nuevo.';
 }
 
-async function api(op: string, params: Record<string, string> = {}): Promise<Contracts.LibraryReply> {
+async function api(op: string, params: Record<string, string> = {}, cancel?: AbortSignal): Promise<Contracts.LibraryReply> {
   const query = new URLSearchParams({ op, ...params });
-  const response = await fetch(`/api/library?${query.toString()}`, { signal: AbortSignal.timeout(30_000) });
+  const timeout = AbortSignal.timeout(30_000);
+  const signal = cancel ? AbortSignal.any([cancel, timeout]) : timeout;
+  const response = await fetch(`/api/library?${query.toString()}`, { signal });
   if (!response.ok) throw new Error('No se pudo consultar el catálogo.');
   const result = (await response.json()) as Contracts.LibraryReply;
   if (result.error) throw new Error(result.error);
@@ -172,10 +185,117 @@ function subtitleLabel(value: string): string {
   return value.replace(/^spanish/i, 'Español');
 }
 
+/**
+ * Elegir un elemento con el control: se lo enfoca sin saltos de página, la fila se desliza suave
+ * hasta que se vea, la fila activa se ilumina, se recuerda la columna y el destacado de arriba
+ * muestra la tarjeta elegida.
+ */
 function focusElement(node: HTMLElement | null): void {
   if (!node) return;
+  const previous = document.activeElement;
   node.focus({ preventScroll: true });
-  node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+  if (previous !== node && node.classList.contains('card')) {
+    node.classList.remove('just-focused');
+    void node.offsetWidth; // reinicia la animación del borde
+    node.classList.add('just-focused');
+  }
+  revealInTrack(node);
+  const row = node.closest('.row, .related, .seasons, .chips, .actions, #topbar, .controls-row');
+  if (row !== activeRow) {
+    activeRow?.classList.remove('is-active');
+    row?.classList.add('is-active');
+    activeRow = row;
+  }
+  const parent = node.parentElement;
+  if (parent) rowMemory.set(parent, [...parent.children].indexOf(node));
+  if (detailPanel.hidden && player.hidden) {
+    revealRow(node);
+    spotlightFor(node);
+  } else if (!detailPanel.hidden && detailBody.contains(node)) {
+    revealInDetails(node);
+  }
+}
+
+/** Dentro de una fila horizontal: la tarjeta queda a la vista con una de margen (desliz suave). */
+function revealInTrack(node: HTMLElement): void {
+  const track = node.parentElement;
+  if (!track || track.scrollWidth <= track.clientWidth) return;
+  const box = track.getBoundingClientRect();
+  const rect = node.getBoundingClientRect();
+  const margin = Math.min(rect.width * 1.2, 190);
+  if (rect.left < box.left + margin) track.scrollBy({ left: rect.left - box.left - margin, behavior: 'smooth' });
+  else if (rect.right > box.right - margin) track.scrollBy({ left: rect.right - box.right + margin, behavior: 'smooth' });
+}
+
+/** Las filas del catálogo: la fila elegida sube hasta arriba de la lista (se desliza la lista entera). */
+function revealRow(node: HTMLElement): void {
+  const row = node.closest<HTMLElement>('.row');
+  if (!row) {
+    if (rowsViewport.contains(node)) return;
+    rowsScroll.style.transform = ''; // barra de arriba o destacado: la lista vuelve al principio
+    return;
+  }
+  const offset = row.offsetTop - rowsScroll.offsetTop;
+  rowsScroll.style.transform = offset > 0 ? `translate3d(0, ${String(-offset)}px, 0)` : '';
+}
+
+/** En la ficha: lo elegido a la vista dentro de la ficha (desliz suave). */
+function revealInDetails(node: HTMLElement): void {
+  const box = detailBody.getBoundingClientRect();
+  const rect = node.getBoundingClientRect();
+  if (rect.top < box.top + 80) detailBody.scrollBy({ top: rect.top - box.top - 80, behavior: 'smooth' });
+  else if (rect.bottom > box.bottom - 60) detailBody.scrollBy({ top: rect.bottom - box.bottom + 60, behavior: 'smooth' });
+}
+
+// ---------- Destacado de arriba (como Google TV) ----------
+
+let heroFront: 0 | 1 = 0;
+let heroShown = '';
+let spotlightTimer = 0;
+
+/** Muestra un título en el destacado. El texto cambia enseguida; la imagen, con un fundido. */
+function showSpotlight(item: Contracts.LibraryTitle, preview: boolean): void {
+  const key = `${item.type}:${item.id}:${String(preview)}`;
+  if (key === heroShown) return;
+  heroShown = key;
+  heroCopy.classList.add('is-changing');
+  requestAnimationFrame(() => {
+    heroEyebrow.textContent = preview ? (item.type === 'tv' ? 'Serie' : 'Película') : 'Destacado';
+    heroTitle.textContent = item.title;
+    heroMeta.textContent = metaText(item);
+    heroOverview.textContent = item.overview;
+    heroCopy.classList.toggle('is-preview', preview);
+    heroCopy.classList.remove('is-changing');
+  });
+  // La imagen espera a que el control se quede quieto un instante: recorriendo rápido no se
+  // bajan ni decodifican imágenes de más.
+  clearTimeout(spotlightTimer);
+  spotlightTimer = window.setTimeout(() => { void swapHeroImage(item.backdrop || item.poster); }, 180);
+}
+
+async function swapHeroImage(src: string): Promise<void> {
+  const front = heroImages[heroFront];
+  if (!src || front.src === src) return;
+  const next = heroFront === 0 ? 1 : 0;
+  const incoming = heroImages[next];
+  incoming.src = src;
+  try {
+    await incoming.decode(); // se decodifica antes del fundido: el cambio no traba un cuadro
+  } catch {
+    return;
+  }
+  if (incoming.src !== src) return; // mientras tanto se eligió otra
+  incoming.classList.add('is-shown');
+  front.classList.remove('is-shown');
+  heroFront = next;
+}
+
+/** Al elegir una tarjeta, el destacado la muestra; en la barra de arriba o el destacado, vuelve el destacado. */
+function spotlightFor(node: HTMLElement): void {
+  if (hero.hidden) return;
+  const item = cardItems.get(node);
+  if (item) showSpotlight(item, true);
+  else if (catalogHero && (node === heroPlay || node === heroInfo || node.closest('#topbar'))) showSpotlight(catalogHero, false);
 }
 
 function setStatus(text: string): void {
@@ -311,6 +431,7 @@ function makeCard(item: Contracts.LibraryTitle, progress?: ProgressEntry): HTMLB
   name.className = 'name';
   name.textContent = item.title;
   card.append(wrap, name);
+  cardItems.set(card, item);
   card.addEventListener('click', () => {
     void openDetails(item, progress ? { autoplay: true, resume: progress } : {});
   });
@@ -321,6 +442,7 @@ function appendRow(name: string, cards: readonly HTMLElement[]): void {
   if (!cards.length) return;
   const section = document.createElement('section');
   section.className = 'row';
+  section.style.setProperty('--i', String(rowsEl.children.length)); // entrada escalonada
   const heading = document.createElement('h2');
   heading.textContent = name;
   const track = document.createElement('div');
@@ -337,42 +459,53 @@ function renderHome(): void {
   for (const row of catalogRows) appendRow(row.name, row.items.map((item) => makeCard(item)));
   const uniqueCount = new Set(catalogRows.flatMap((row) => row.items).map((item) => `${item.type}:${item.id}`)).size;
   setStatus(uniqueCount ? `${uniqueCount} títulos · Audio o subtítulos en español · Catálogo FrameX` : 'No hay títulos para mostrar.');
-  window.scrollTo(0, 0);
+  resetRows();
   rebuildNav();
   focusInitial();
 }
 
-function renderResults(items: readonly Contracts.LibraryTitle[], query: string): void {
+/**
+ * Resultados de búsqueda: películas y series en filas separadas (más fácil de recorrer con el
+ * control). Si se está escribiendo, el foco se queda en el buscador.
+ */
+function renderResults(items: readonly Contracts.LibraryTitle[], query: string, approximate: string | null): void {
   rowsEl.replaceChildren();
-  appendRow(`Resultados para “${query}”`, items.map((item) => makeCard(item)));
-  setStatus(items.length ? `${items.length} resultados · Se reproduce en español.` : `No se encontraron títulos para “${query}”.`);
-  window.scrollTo(0, 0);
+  const movies = items.filter((item) => item.type === 'movie');
+  const series = items.filter((item) => item.type === 'tv');
+  appendRow(movies.length && series.length ? 'Películas' : `Resultados para “${approximate ?? query}”`, movies.map((item) => makeCard(item)));
+  appendRow(movies.length ? 'Series' : `Resultados para “${approximate ?? query}”`, series.map((item) => makeCard(item)));
+  setStatus(!items.length ? `No se encontraron títulos para “${query}”.`
+    : approximate ? `Nada exacto para “${query}”: resultados parecidos a “${approximate}”.`
+      : `${items.length} resultados para “${query}” · Se reproduce en español.`);
+  resetRows();
   rebuildNav();
-  focusInitial();
+  if (document.activeElement !== search) focusInitial();
+}
+
+/** Lista nueva: vuelve al principio y sin fila activa. */
+function resetRows(): void {
+  rowsScroll.style.transform = '';
+  activeRow?.classList.remove('is-active');
+  activeRow = null;
 }
 
 function renderHero(item: Contracts.LibraryHero): void {
   catalogHero = item;
   hero.hidden = false;
-  heroTitle.textContent = item.title;
-  heroMeta.textContent = metaText(item);
-  heroOverview.textContent = item.overview;
   heroPlay.disabled = false;
   heroInfo.disabled = false;
-  const image = item.backdrop || item.poster;
-  if (image) {
-    heroImage.src = image;
-    heroImage.hidden = false;
-  } else {
-    heroImage.removeAttribute('src');
-    heroImage.hidden = true;
-  }
+  heroShown = '';
+  showSpotlight(item, false);
 }
 
 async function loadHome(): Promise<void> {
+  clearTimeout(searchTimer);
+  searchAbort?.abort();
+  searchAbort = null;
+  searchForm.classList.remove('is-busy');
   const token = ++catalogToken;
   searchMode = false;
-  search.value = '';
+  if (document.activeElement !== search) search.value = '';
   catalogHero = null;
   setStatus('Cargando catálogo…');
   try {
@@ -381,7 +514,7 @@ async function loadHome(): Promise<void> {
     catalogRows = (reply.rows ?? []).filter((row) => row.items.length > 0);
     if (reply.hero) renderHero(reply.hero);
     else { hero.hidden = true; catalogHero = null; }
-    catalogEl.classList.remove('no-hero');
+    catalogEl.classList.toggle('no-hero', hero.hidden);
     renderHome();
   } catch (error) {
     if (token !== catalogToken) return;
@@ -390,20 +523,35 @@ async function loadHome(): Promise<void> {
 }
 
 async function runSearch(query: string): Promise<void> {
+  clearTimeout(searchTimer);
+  searchAbort?.abort(); // una búsqueda vieja (se siguió escribiendo) no pisa a la nueva
+  const abort = new AbortController();
+  searchAbort = abort;
   const token = ++catalogToken;
   searchMode = true;
-  setStatus('Buscando…');
+  setStatus(`Buscando “${query}”…`);
+  searchForm.classList.add('is-busy');
   try {
-    const reply = await api('search', { q: query });
+    const reply = await api('search', { q: query }, abort.signal);
     if (token !== catalogToken) return;
-    hero.hidden = true;
-    catalogHero = null;
-    catalogEl.classList.add('no-hero');
-    renderResults(reply.items ?? [], query);
+    renderResults(reply.items ?? [], query, reply.approximate ?? null);
   } catch (error) {
-    if (token !== catalogToken) return;
+    if (token !== catalogToken || abort.signal.aborted) return;
     setStatus(errorText(error));
+  } finally {
+    if (token === catalogToken) searchForm.classList.remove('is-busy');
   }
+}
+
+/** Mientras se escribe (teclado del celular o de la notebook): busca solo, al dejar de escribir. */
+function searchWhileTyping(): void {
+  clearTimeout(searchTimer);
+  const query = search.value.trim();
+  if (query.length < 2) {
+    if (!query && searchMode) searchTimer = window.setTimeout(() => { void loadHome(); }, SEARCH_DELAY_MS);
+    return;
+  }
+  searchTimer = window.setTimeout(() => { void runSearch(query); }, SEARCH_DELAY_MS);
 }
 
 function rebuildNav(): void {
@@ -417,7 +565,8 @@ function rebuildNav(): void {
 
 function focusInitial(): void {
   const firstTrack = rowsEl.querySelector<HTMLElement>('.track .card');
-  focusElement(!hero.hidden ? heroPlay : firstTrack ?? search);
+  // En una búsqueda, directo al primer resultado; en el catálogo, al destacado.
+  focusElement(searchMode ? firstTrack ?? search : !hero.hidden ? heroPlay : firstTrack ?? search);
 }
 
 function positionIn(rows: readonly HTMLElement[][], node: HTMLElement | null): { row: number; col: number } | null {
@@ -438,22 +587,49 @@ function moveIn(rows: readonly HTMLElement[][], direction: 'up' | 'down' | 'left
     return;
   }
   if (direction === 'left' || direction === 'right') {
-    const row = rows[position.row];
-    if (!row) return;
-    const col = Math.min(Math.max(position.col + (direction === 'right' ? 1 : -1), 0), row.length - 1);
-    const next = row[col];
-    if (next) {
-      lastColumn = col;
-      focusElement(next);
-    }
+    const next = rows[position.row]?.[position.col + (direction === 'right' ? 1 : -1)];
+    if (next) focusElement(next);
+    else if (active) bump(active, direction);
     return;
   }
-  const row = Math.min(Math.max(position.row + (direction === 'down' ? 1 : -1), 0), rows.length - 1);
-  const target = rows[row];
-  if (!target?.length) return;
-  const col = Math.min(Math.max(lastColumn, 0), target.length - 1);
-  const next = target[col];
-  if (next) focusElement(next);
+  const target = rows[position.row + (direction === 'down' ? 1 : -1)];
+  if (!target?.length || !active) {
+    if (active) bump(active, direction);
+    return;
+  }
+  focusElement(entryPoint(target, active));
+}
+
+/**
+ * Al entrar a una fila: la tarjeta donde se había quedado (como Google TV); si nunca se visitó, la
+ * que está más cerca en pantalla de la actual.
+ */
+function entryPoint(target: readonly HTMLElement[], from: HTMLElement): HTMLElement {
+  const container = target[0]?.parentElement;
+  const remembered = container ? rowMemory.get(container) : undefined;
+  const saved = remembered === undefined ? undefined : container?.children[remembered];
+  if (saved instanceof HTMLElement && target.includes(saved)) return saved;
+  const box = from.getBoundingClientRect();
+  const x = box.left + box.width / 2;
+  let best = target[0] as HTMLElement;
+  let distance = Infinity;
+  for (const node of target) {
+    const rect = node.getBoundingClientRect();
+    const gap = Math.abs(rect.left + rect.width / 2 - x);
+    if (gap < distance) {
+      distance = gap;
+      best = node;
+    }
+  }
+  return best;
+}
+
+/** No hay nada hacia ese lado: un pequeño rebote avisa (en vez de no hacer nada). */
+function bump(node: HTMLElement, direction: 'up' | 'down' | 'left' | 'right'): void {
+  const dx = direction === 'left' ? -6 : direction === 'right' ? 6 : 0;
+  const dy = direction === 'up' ? -5 : direction === 'down' ? 5 : 0;
+  node.animate([{ translate: '0 0' }, { translate: `${String(dx)}px ${String(dy)}px` }, { translate: '0 0' }],
+    { duration: 220, easing: 'cubic-bezier(.3,1.35,.5,1)' });
 }
 
 // ---------- Ficha ----------
@@ -1009,6 +1185,13 @@ function seek(seconds: number): void {
   video.currentTime = duration ? Math.min(duration - 1, target) : target;
   updateProgress();
   showControls();
+  // Aviso corto en el centro ("+10 s"), que se va solo.
+  const flash = document.createElement('div');
+  flash.className = 'seek-flash';
+  flash.textContent = `${seconds > 0 ? '+' : '−'}${String(Math.abs(seconds))} s`;
+  player.querySelector('.seek-flash')?.remove();
+  player.append(flash);
+  flash.addEventListener('animationend', () => { flash.remove(); });
 }
 
 function updateProgress(): void {
@@ -1165,6 +1348,12 @@ function back(): boolean {
 
 addEventListener('keydown', (event) => {
   if (event.defaultPrevented) return;
+  // OK sobre una tarjeta o botón: se "hunde" un instante (se nota que el control respondió).
+  const target = event.target;
+  if (event.key === 'Enter' && target instanceof HTMLElement && target.matches('button, a')) {
+    target.classList.add('pressed');
+    setTimeout(() => { target.classList.remove('pressed'); }, 140);
+  }
   if (!player.hidden) handlePlayerKey(event);
   else if (!detailPanel.hidden) handleDetailsKey(event);
   else handleCatalogKey(event);
@@ -1186,6 +1375,20 @@ search.addEventListener('keydown', (event) => {
     focusInitial();
   }
 });
+// Busca mientras se escribe (también con el texto que manda el teclado del celular).
+search.addEventListener('input', searchWhileTyping);
+
+// Deslizar con dos dedos (touchpad del celular) o la ruedita sobre el catálogo: recorre las filas.
+let wheelPending = 0;
+rowsViewport.addEventListener('wheel', (event) => {
+  if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return; // horizontal: la fila se desplaza sola
+  event.preventDefault();
+  wheelPending += event.deltaY;
+  while (Math.abs(wheelPending) >= 100) {
+    moveIn(navRows, wheelPending > 0 ? 'down' : 'up');
+    wheelPending -= Math.sign(wheelPending) * 100;
+  }
+}, { passive: false });
 
 heroPlay.addEventListener('click', () => {
   const item = catalogHero;
@@ -1287,6 +1490,16 @@ window.__controlTvBack = (): boolean => back();
 window.__controlTvTogglePlayback = (): boolean => {
   if (player.hidden) return false;
   togglePlayback();
+  return true;
+};
+/** Buscar desde el celular ("Buscar" en su pantalla de búsqueda): busca acá, sin salir del Cine. */
+window.__controlTvSearch = (query: string): boolean => {
+  const text = query.trim().slice(0, 80);
+  if (!text) return false;
+  if (!player.hidden) stopPlayer();
+  closeDetails();
+  search.value = text;
+  void runSearch(text);
   return true;
 };
 window.__controlTvPrepareText = (): boolean => {

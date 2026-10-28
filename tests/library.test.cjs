@@ -59,7 +59,7 @@ test('biblioteca: catálogo con portada, filas limitadas, imágenes al tamaño j
   assert.deepEqual(first, second);
   assert.equal(first.rows.length, 2);
   assert.equal(first.rows[0].items.length, 20);
-  assert.equal(first.rows[0].items[0].overview, '', 'Las tarjetas no cargan la sinopsis completa');
+  assert.equal(first.rows[0].items[0].overview.length, 240, 'Las tarjetas traen una sinopsis corta (para el destacado), no la completa');
   assert.equal(first.rows[0].items[0].poster, tmdb('w342', 'poster'), 'Pide la portada chica');
   assert.equal(first.rows[0].items[1].poster, '', 'Descarta esquemas inseguros');
   assert.equal(first.rows[0].items[1].backdrop, tmdb('w780', 'backdrop'));
@@ -222,6 +222,47 @@ test('biblioteca: si ningún servidor tiene español, lo informa y no reproduce 
   });
   const reply = await library.query(query({ op: 'resolve', id: '1', type: 'movie' }));
   assert.match(reply.error, /español/);
+});
+
+test('búsqueda: mayúsculas y tildes comparten caché, dos páginas, coincidencias primero y sin póster al final', async () => {
+  const pages = [];
+  const result = (id, title, poster = true) => ({ id, type: id > 50 ? 'tv' : 'movie', title, year: '2020', rating: '7',
+    poster: poster ? tmdb('w500', `p${id}`) : '', backdrop: '', overview: '' });
+  const library = new FramexLibrary(async (url) => {
+    const params = new URL(url).searchParams;
+    pages.push(`${params.get('q')}#${params.get('page')}`);
+    if (params.get('page') === '1') {
+      return Response.json({ success: true, totalPages: 2, results: [
+        result(1, 'Batman y Robin'), result(2, 'Otra cosa sin póster', false), result(3, 'Lego Batman'), result(51, 'Batman'),
+      ] });
+    }
+    return Response.json({ success: true, totalPages: 2, results: [result(4, 'Batman: El regreso'), result(1, 'Batman y Robin')] });
+  });
+  const reply = await library.query(query({ op: 'search', q: '  Batman ' }));
+  assert.deepEqual(pages, ['Batman#1', 'Batman#2'], 'Trae las dos primeras páginas');
+  assert.deepEqual(reply.items.map((item) => item.title),
+    ['Batman', 'Batman y Robin', 'Batman: El regreso', 'Lego Batman', 'Otra cosa sin póster'],
+    'Igual primero, después los que empiezan igual, el resto, y sin póster al final (sin repetidos)');
+  await library.query(query({ op: 'search', q: 'BÁTMAN' }));
+  await library.query(query({ op: 'search', q: 'batman' }));
+  assert.equal(pages.length, 2, 'Mayúsculas y tildes no repiten la consulta');
+});
+
+test('búsqueda: con un error de tipeo prueba una versión más corta y lo avisa; se recupera de un corte', async () => {
+  const asked = [];
+  let failFirst = true;
+  const library = new FramexLibrary(async (url) => {
+    const q = new URL(url).searchParams.get('q');
+    asked.push(q);
+    if (q === 'avengrs' && failFirst) { failFirst = false; throw new Error('corte'); }
+    if (q === 'aveng') return Response.json({ success: true, totalPages: 1, results: [{ id: 9, type: 'movie', title: 'Avengers', poster: tmdb('w500', 'a') }] });
+    return Response.json({ success: true, totalPages: 1, results: [] });
+  });
+  const reply = await library.query(query({ op: 'search', q: 'avengrs' }));
+  assert.deepEqual(asked, ['avengrs', 'avengrs', 'aveng'], 'Reintenta una vez tras el corte y después busca algo parecido');
+  assert.equal(reply.approximate, 'aveng');
+  assert.deepEqual(reply.items.map((item) => item.title), ['Avengers']);
+  assert.ok((await library.query(query({ op: 'search', q: '   ' }))).error, 'Vacío: no consulta');
 });
 
 test('biblioteca: limita respuesta, se recupera de errores de red y no cachea fallos', async () => {

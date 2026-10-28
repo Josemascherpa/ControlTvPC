@@ -191,3 +191,26 @@ test('reconexión CDP conserva la plataforma y libera el socket anterior', async
     CdpClient.connect = originalConnect;
   }
 });
+
+test('búsqueda del celular: con el Cine abierto busca ahí; si la página no tiene buscador, abre Google', async () => {
+  const run = async (pageHandlesSearch) => {
+    const calls = [];
+    const edge = { urlChanged: new Signal(), popupRequested: new Signal(), isReady: true, ensure: async () => {}, bringToFront: async () => {},
+      page: async (method, params) => {
+        calls.push([method, params]);
+        if (method === 'Runtime.evaluate' && String(params?.expression).includes('__controlTvSearch')) return { result: { value: pageHandlesSearch } };
+        return { result: { value: false } };
+      } };
+    const screen = new EdgeScreen(edge, { forUrl: () => undefined }, 'http://127.0.0.1:8001/', { info: () => {}, warn: () => {} });
+    edge.urlChanged.emit('http://127.0.0.1:8001/cinema.html');
+    await screen.openUrl('https://www.google.com/search?q=el%20padrino');
+    const searched = calls.find(([m, p]) => m === 'Runtime.evaluate' && String(p?.expression).includes('__controlTvSearch'));
+    const navigated = calls.find(([m]) => m === 'Page.navigate');
+    return { searched, navigated };
+  };
+  const inCinema = await run(true);
+  assert.ok(inCinema.searched?.[1].expression.includes('"el padrino"'), 'Le pasa lo buscado al Cine (como texto, sin código)');
+  assert.equal(inCinema.navigated, undefined, 'No sale del Cine');
+  const elsewhere = await run(false);
+  assert.equal(elsewhere.navigated?.[1].url, 'https://www.google.com/search?q=el%20padrino', 'Sin buscador propio: Google como siempre');
+});

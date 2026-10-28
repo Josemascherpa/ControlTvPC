@@ -84,6 +84,8 @@ declare namespace Contracts {
     readonly subtitles?: readonly LibrarySubtitle[];
     readonly provider?: string;
     readonly alternates?: readonly string[];
+    /** Búsqueda sin resultados exactos: se muestran los de una búsqueda parecida (ej. "avengrs" → "aveng"). */
+    readonly approximate?: string;
     readonly error?: string;
   }
   interface VolumeState {
@@ -206,4 +208,6 @@ interface Window {
   __controlTvBack?: () => boolean | 'escape';
   /** Confirma foco editable o enfoca un único buscador visible; no recibe ni guarda el texto. */
   __controlTvPrepareText?: () => boolean | Promise<boolean>;
+  /** Búsqueda que manda el celular: la página que tiene buscador propio (el Cine) busca ahí mismo. */
+  __controlTvSearch?: (query: string) => boolean;
 }

@@ -14,7 +14,9 @@ const DETAIL_TTL = 10 * 60_000;
 const SEARCH_TTL = 2 * 60_000;
 const PROVIDER_TTL = 60_000;
 const RAIL_ITEMS = 20;
-const SEARCH_ITEMS = 24;
+const SEARCH_ITEMS = 40;
+/** La búsqueda tiene que contestar rápido: si la primera vez la API no responde en esto, se reintenta una vez. */
+const SEARCH_TIMEOUT = 9000;
 /** Los servidores que primero se prueban al pedir "Reproducir" (el resto queda para elegir a mano). */
 const PROVIDER_PREFERENCE = [
   'royal_champion', 'titan', 'super_dragon', 'super_barbarian', 'little_prince', 'archer_queen',
@@ -123,6 +125,45 @@ function unique<T>(items: readonly T[], key: (item: T) => string): T[] {
   });
 }
 
+/** Para comparar textos: minúsculas, sin tildes ni signos ("Rápidos & Furiosos" → "rapidos furiosos"). */
+function fold(value: string): string {
+  return value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9ñ]+/g, ' ').trim();
+}
+
+/**
+ * Orden de los resultados: primero lo que coincide con lo escrito (igual, empieza igual, tiene todas
+ * las palabras), después el orden de relevancia de la API; los que no tienen póster van al final.
+ */
+function rankSearch(items: readonly Contracts.LibraryTitle[], text: string): Contracts.LibraryTitle[] {
+  // Los artículos del principio no cuentan: "matrix" es igual a "The Matrix", "padrino" a "El Padrino".
+  const core = (value: string): string => fold(value).replace(/^(the|a|an|el|la|los|las|un|una) /, '');
+  const query = core(text);
+  // Sin espacios ni guiones para comparar: "spiderman" es igual a "Spider-Man".
+  const compactQuery = query.replace(/ /g, '');
+  const words = query.split(' ').filter((word) => word.length > 1);
+  const score = (item: Contracts.LibraryTitle, index: number): number => {
+    const title = core(item.title);
+    const compact = title.replace(/ /g, '');
+    const match = compact === compactQuery ? 3
+      : compact.startsWith(compactQuery) ? 2
+        : words.length > 0 && words.every((word) => new RegExp(`(^| )${word}`).test(title)) ? 1 : 0;
+    // Entre los que coinciden igual ("Matrix", "Matrix", "Matrix"), primero el de mejor puntaje
+    // (suele ser el que se busca: la de 1999 y no un documental).
+    return match * 100 + (Number(item.rating) || 0) * 2 + (item.poster ? 0 : -500) - index;
+  };
+  return items.map((item, index) => ({ item, value: score(item, index) }))
+    .sort((a, b) => b.value - a.value).map(({ item }) => item);
+}
+
+/** Si una búsqueda no trae nada (error de tipeo), una versión más corta: "avengrs" → "aveng". */
+function looserQuery(text: string): string | null {
+  const words = text.split(' ');
+  const last = words[words.length - 1] ?? '';
+  if (last.length < 5) return null;
+  words[words.length - 1] = last.slice(0, Math.ceil(last.length * 0.7));
+  return words.join(' ');
+}
+
 function providerIds(value: unknown): string[] {
   return asArray(value).flatMap((item) => (PROVIDER_ID.test(asString(item)) ? [asString(item)] : []));
 }
@@ -142,9 +183,41 @@ export class FramexLibrary implements MediaLibrary {
       if (!isStreamPlan(plan)) return plan;
       return this.stream(plan, plan.provider).catch(() => rejected(NETWORK_ERROR));
     }
+    if (op === 'search') return this.search(params);
     const plan = this.plan(op, params);
     if (!isPlanned(plan)) return plan;
     return this.cached(`${ORIGIN}${plan.path}?${plan.query.toString()}`, plan.ttl, () => this.load(plan));
+  }
+
+  /**
+   * Búsqueda: "Batman", "batman" y "BATMAN" (o con y sin tildes) son la misma (una sola consulta y
+   * caché). Trae dos páginas a la vez (40 resultados), las ordena por coincidencia con lo escrito y,
+   * si no hay nada, prueba una versión más corta por si hubo un error de tipeo.
+   */
+  private search(params: URLSearchParams): Promise<Contracts.LibraryReply> {
+    const text = (params.get('q') ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!text) return Promise.resolve(rejected('Escribí algo para buscar.'));
+    return this.cached(`search:${fold(text)}`, SEARCH_TTL, async () => {
+      const exact = await this.searchPages(text);
+      if (exact.length > 0) return { items: rankSearch(exact, text).slice(0, SEARCH_ITEMS) };
+      const looser = looserQuery(text);
+      if (!looser) return { items: [] };
+      const near = await this.searchPages(looser);
+      return near.length > 0 ? { items: rankSearch(near, looser).slice(0, SEARCH_ITEMS), approximate: looser } : { items: [] };
+    });
+  }
+
+  /** Las dos primeras páginas de resultados (la primera con un reintento si la API no contesta). */
+  private async searchPages(text: string): Promise<Contracts.LibraryTitle[]> {
+    const page = (number: number): Promise<Readonly<Record<string, unknown>>> => this.json(
+      `${ORIGIN}/api/search?${new URLSearchParams({ q: text, type: 'multi', page: String(number) }).toString()}`, SEARCH_TIMEOUT,
+    ).then(asRecord);
+    const first = await page(1).catch(() => page(1));
+    const pages = asNullableNumber(first['totalPages']) ?? 1;
+    const second = pages > 1 ? await page(2).catch(() => ({})) : {};
+    // La API a veces repite títulos entre una página y la otra: se quitan los repetidos.
+    return unique([...this.titles(first['results'], 100), ...this.titles(asRecord(second)['results'], 100)],
+      (title) => `${title.type}:${title.id}`);
   }
 
   /**
@@ -172,12 +245,6 @@ export class FramexLibrary implements MediaLibrary {
   private plan(op: string, params: URLSearchParams): Planned | Rejected {
     if (op === 'home') return { path: '/api/home', query: new URLSearchParams(), ttl: HOME_TTL };
     if (op === 'providers') return { path: '/api/providers', query: new URLSearchParams(), ttl: PROVIDER_TTL };
-    if (op === 'search') {
-      const text = (params.get('q') ?? '').trim().slice(0, 120);
-      if (!text) return rejected('Escribí algo para buscar.');
-      const query = new URLSearchParams({ q: text, type: 'multi', page: '1' });
-      return { path: '/api/search', query, ttl: SEARCH_TTL };
-    }
     if (op === 'details' || op === 'season') {
       const id = params.get('id') ?? '';
       const type = params.get('type') ?? '';
@@ -247,16 +314,15 @@ export class FramexLibrary implements MediaLibrary {
     const raw = asRecord(await this.json(`${ORIGIN}${plan.path}?${plan.query.toString()}`));
     if (raw['success'] === false) return rejected('La fuente no tiene disponible ese contenido.');
     if (plan.path === '/api/home') return this.home(raw);
-    if (plan.path === '/api/search') return { items: this.titles(raw['results'], SEARCH_ITEMS) };
     if (plan.path === '/api/details') return this.details(raw);
     if (plan.path === '/api/season') return this.episodes(raw);
     if (plan.path === '/api/providers') return this.providers(raw);
     return rejected('Operación no válida.');
   }
 
-  private async json(url: string): Promise<unknown> {
+  private async json(url: string, timeout = 20_000): Promise<unknown> {
     const response = await this.request(url, {
-      signal: AbortSignal.timeout(20_000), redirect: 'error', headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(timeout), redirect: 'error', headers: { Accept: 'application/json' },
     });
     if (!response.ok || !response.body) throw new Error('Fuente no disponible');
     const text = await this.readText(response.body, MAX_BYTES);
@@ -483,7 +549,8 @@ export class FramexLibrary implements MediaLibrary {
 
   private titles(value: unknown, limit: number): readonly Contracts.LibraryTitle[] {
     return unique(asArray(value).flatMap((item) => {
-      const title = this.title(asRecord(item), 0);
+      // Sinopsis corta: el destacado del Cine la muestra al elegir la tarjeta (dos líneas alcanzan).
+      const title = this.title(asRecord(item), 240);
       return title ? [title] : [];
     }), (title) => `${title.type}:${title.id}`).slice(0, limit);
   }
