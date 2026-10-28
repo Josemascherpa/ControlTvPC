@@ -157,6 +157,13 @@ carga la web del proveedor ni se ejecuta su JavaScript: sólo se validan los dat
 - **Búsqueda:** dos páginas, se quitan los repetidos y se ordena por coincidencia (exacta >
   empieza con > todas las palabras), sin póster al final; con un error de tipeo se prueba una
   palabra más corta (`approximate`). La búsqueda del celular va al buscador del Cine (`__controlTvSearch`).
+- **Tarjetas apaisadas** (`--card-w/--card-h` en `cinema.css`, imagen = backdrop w780, la misma del
+  destacado). La fila elegida deja asomar la mitad de la anterior (`revealRow`, `peek`) y la
+  siguiente asoma abajo; bordes esfumados con `mask-image`. Toda curva `var(--x)` tiene que estar
+  definida en `:root`: si no, el navegador descarta la transición entera (pasó con `--glide`).
+- **Subtítulos dibujados por la app:** pista en modo `hidden` + `cuechange` → `#subtitleBox`
+  (`getCueAsHTML`, nunca innerHTML). Tamaño y altura desde el reproductor, guardados en
+  `localStorage` (`cine:subtitles:v1`). Con los controles visibles suben para no quedar tapados.
 - **Reproducir:** servidores escalonados cada 1,2 s (gana el primero que sirve), la fuente queda
   15 min y se prebusca al abrir la ficha. Subtítulos SRT → VTT.
 

@@ -78,6 +78,7 @@
 
 <section id="player" hidden aria-label="Reproductor">
   <video id="video" playsinline preload="none" tabindex="-1"></video>
+  <div id="subtitleBox" class="subtitle-box" aria-hidden="true"></div>
   <div id="playerTop" class="player-top" hidden>
     <button id="playerBack" class="icon-btn" type="button" aria-label="Volver">←</button>
     <div class="player-title"><h2 id="playingTitle"></h2><p id="playingMeta"></p></div>
@@ -91,6 +92,8 @@
       <span id="time" class="time">0:00</span>
       <span class="spacer"></span>
       <button id="subtitlesBtn" class="pill" type="button">Subtítulos</button>
+      <button id="subtitleSizeBtn" class="pill" type="button">Tamaño</button>
+      <button id="subtitleHeightBtn" class="pill" type="button">Altura</button>
       <button id="audioBtn" class="pill" type="button">Audio</button>
       <button id="nextBtn" class="pill accent" type="button" hidden>Siguiente episodio</button>
     </div>

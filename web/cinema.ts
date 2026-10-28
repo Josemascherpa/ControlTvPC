@@ -299,7 +299,11 @@ function revealRow(node: HTMLElement): void {
     rowsScroll.style.transform = ''; // barra de arriba o destacado: la lista vuelve al principio
     return;
   }
-  const offset = row.offsetTop - rowsScroll.offsetTop;
+  // La fila anterior sigue asomando arriba (su mitad de abajo, con los nombres): se ve de dónde se
+  // viene, como en Google TV. La siguiente ya asoma abajo.
+  const previous = row.previousElementSibling;
+  const peek = previous instanceof HTMLElement ? Math.round(previous.offsetHeight * 0.5) : 0;
+  const offset = row.offsetTop - rowsScroll.offsetTop - peek;
   rowsScroll.style.transform = offset > 0 ? `translate3d(0, ${String(-offset)}px, 0)` : '';
 }
 
@@ -370,7 +374,7 @@ async function swapHeroImage(src: string): Promise<void> {
   } catch {
     return;
   }
-  if (incoming.src !== src) return; // mientras tanto se eligió otra
+  if (incoming.src !== url) return; // mientras tanto se eligió otra
   incoming.classList.add('is-shown');
   front.classList.remove('is-shown');
   heroFront = next;
@@ -495,7 +499,7 @@ function entryTitle(entry: ProgressEntry): Contracts.LibraryTitle {
 //  - Distancia de dibujo: sólo se bajan y decodifican las imágenes cerca del foco (la fila elegida y
 //    las dos de abajo, unas tarjetas por delante). Medido antes: decodificar en plena animación
 //    trababa cuadros; así llegan decodificadas antes de entrar en pantalla, y las lejanas no gastan.
-const DRAW_AHEAD = 14;
+const DRAW_AHEAD = 10;
 const ROWS_AHEAD = 2;
 const POOL_LIMIT = 400;
 const cardPool = new Map<string, HTMLButtonElement>();
@@ -554,8 +558,9 @@ function makeCard(item: Contracts.LibraryTitle, progress?: ProgressEntry): HTMLB
   wrap.className = 'poster-wrap';
   const poster = document.createElement('img');
   poster.className = 'poster';
-  poster.width = 148;
-  poster.height = 222;
+  // Tarjeta apaisada con la imagen de fondo del título (la misma del destacado: se baja una sola vez).
+  poster.width = 204;
+  poster.height = 115;
   // La imagen se pide recién cuando está cerca del foco (hydrateAround), con tiempo de sobra para
   // decodificarse antes de que la fila se deslice hasta ella.
   poster.loading = 'eager';
@@ -581,8 +586,9 @@ function makeCard(item: Contracts.LibraryTitle, progress?: ProgressEntry): HTMLB
   poster.addEventListener('load', ready, { once: true });
   poster.addEventListener('error', fallback, { once: true });
   wrap.append(shimmer, poster);
-  if (item.poster) {
-    poster.dataset['src'] = imageUrl(item.poster);
+  const art = item.backdrop || item.poster;
+  if (art) {
+    poster.dataset['src'] = imageUrl(art);
   } else {
     fallback();
   }
@@ -1176,14 +1182,97 @@ function releaseVideo(): void {
   video.load();
   currentSubtitles = [];
   subtitleIndex = -1;
+  watchCues(null);
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
 }
 
 function applySubtitleMode(): void {
+  let selected: TextTrack | null = null;
   for (let index = 0; index < video.textTracks.length; index++) {
     const track = video.textTracks[index];
-    if (track) track.mode = index === subtitleIndex ? 'showing' : 'disabled';
+    if (!track) continue;
+    // 'hidden': la pista se carga y avisa cada frase, pero la dibuja la app (tamaño y altura a gusto).
+    track.mode = index === subtitleIndex ? 'hidden' : 'disabled';
+    if (index === subtitleIndex) selected = track;
   }
+  watchCues(selected);
+}
+
+// ---------- Subtítulos dibujados por la app ----------
+// Los de Edge salen pegados al borde de abajo y grandes, sin forma de moverlos. Acá se dibujan en
+// una capa propia: tamaño y altura se eligen desde el reproductor y quedan guardados.
+
+const SUBTITLE_SIZES = [['Chico', 2.8], ['Mediano', 3.4], ['Grande', 4.1], ['Muy grande', 4.9]] as const;
+/** Distancia desde el borde de abajo de la pantalla (vh). */
+const SUBTITLE_HEIGHTS = [['Baja', 7], ['Media', 14], ['Alta', 22], ['Muy alta', 30]] as const;
+const SUBTITLE_STORE = 'cine:subtitles:v1';
+const subtitleBox = byId<HTMLDivElement>('subtitleBox');
+const subtitleSizeBtn = byId<HTMLButtonElement>('subtitleSizeBtn');
+const subtitleHeightBtn = byId<HTMLButtonElement>('subtitleHeightBtn');
+const subtitleStyle = readSubtitleStyle();
+let cueTrack: TextTrack | null = null;
+let sampleTimer = 0;
+
+function readSubtitleStyle(): { size: number; height: number } {
+  const fallback = { size: 1, height: 2 }; // mediano y alto
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(SUBTITLE_STORE) ?? 'null');
+    if (!isRecord(saved)) return fallback;
+    const size = numberValue(saved['size']);
+    const height = numberValue(saved['height']);
+    return {
+      size: size !== null && size >= 0 && size < SUBTITLE_SIZES.length ? Math.floor(size) : fallback.size,
+      height: height !== null && height >= 0 && height < SUBTITLE_HEIGHTS.length ? Math.floor(height) : fallback.height,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function applySubtitleStyle(): void {
+  const [sizeName, size] = SUBTITLE_SIZES[subtitleStyle.size] ?? SUBTITLE_SIZES[1];
+  const [heightName, height] = SUBTITLE_HEIGHTS[subtitleStyle.height] ?? SUBTITLE_HEIGHTS[2];
+  player.style.setProperty('--sub-size', `${String(size)}vh`);
+  player.style.setProperty('--sub-bottom', `${String(height)}vh`);
+  subtitleSizeBtn.textContent = `Tamaño: ${sizeName}`;
+  subtitleHeightBtn.textContent = `Altura: ${heightName}`;
+}
+
+function changeSubtitleStyle(kind: 'size' | 'height'): void {
+  const count = kind === 'size' ? SUBTITLE_SIZES.length : SUBTITLE_HEIGHTS.length;
+  subtitleStyle[kind] = (subtitleStyle[kind] + 1) % count;
+  try { localStorage.setItem(SUBTITLE_STORE, JSON.stringify(subtitleStyle)); } catch { /* sin guardar: vale para esta vez */ }
+  applySubtitleStyle();
+  // Sin una frase en pantalla, se muestra un ejemplo para ver cómo queda.
+  if (!subtitleBox.querySelector('.cue:not(.sample)')) {
+    const sample = document.createElement('span');
+    sample.className = 'cue sample';
+    sample.textContent = 'Así se van a ver los subtítulos';
+    subtitleBox.replaceChildren(sample);
+    clearTimeout(sampleTimer);
+    sampleTimer = window.setTimeout(renderCues, 2500);
+  }
+}
+
+function watchCues(track: TextTrack | null): void {
+  cueTrack?.removeEventListener('cuechange', renderCues);
+  cueTrack = track;
+  cueTrack?.addEventListener('cuechange', renderCues);
+  renderCues();
+}
+
+function renderCues(): void {
+  const cues = cueTrack?.activeCues;
+  const lines: HTMLElement[] = [];
+  for (let index = 0; cues && index < cues.length; index++) {
+    const cue = cues[index];
+    if (!(cue instanceof VTTCue)) continue;
+    const line = document.createElement('span');
+    line.className = 'cue';
+    line.append(cue.getCueAsHTML()); // cursivas y saltos de línea del subtítulo, como texto (nunca HTML suelto)
+    lines.push(line);
+  }
+  subtitleBox.replaceChildren(...lines);
 }
 
 /**
@@ -1564,7 +1653,7 @@ function handlePlayerKey(event: KeyboardEvent): void {
   }
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     event.preventDefault();
-    const order = [rewind, toggle, forward, subtitlesBtn, audioBtn];
+    const order = [rewind, toggle, forward, subtitlesBtn, subtitleSizeBtn, subtitleHeightBtn, audioBtn];
     if (!nextBtn.hidden) order.push(nextBtn);
     const index = order.indexOf(document.activeElement as HTMLButtonElement);
     const next = order[Math.min(Math.max((index < 0 ? 1 : index) + (event.key === 'ArrowRight' ? 1 : -1), 0), order.length - 1)];
@@ -1667,6 +1756,9 @@ rewind.addEventListener('click', () => { seek(-10); });
 forward.addEventListener('click', () => { seek(10); });
 toggle.addEventListener('click', togglePlayback);
 subtitlesBtn.addEventListener('click', cycleSubtitles);
+subtitleSizeBtn.addEventListener('click', () => { changeSubtitleStyle('size'); });
+subtitleHeightBtn.addEventListener('click', () => { changeSubtitleStyle('height'); });
+applySubtitleStyle();
 audioBtn.addEventListener('click', cycleAudio);
 nextBtn.addEventListener('click', () => {
   const next = playerContext?.next;

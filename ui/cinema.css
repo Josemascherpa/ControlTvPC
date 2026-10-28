@@ -2,7 +2,14 @@
 :root{
   --bg:#07090c;--text:#f4f6f8;--muted:#9aa7b3;--accent:#7ce8c4;--line:#ffffff14;
   --ease:cubic-bezier(.2,.8,.2,1);--lift:cubic-bezier(.3,1.35,.5,1);
-  --hero-h:46vh;
+  /* Desliz largo y suave (arranca rápido y frena despacio, como Google TV). Antes no estaba definida y
+     el navegador descartaba las transiciones que la usaban: filas y tarjetas saltaban sin animación. */
+  --glide:cubic-bezier(.16,1,.3,1);
+  /* Foco con un pequeño rebote al llegar. */
+  --spring:cubic-bezier(.34,1.42,.64,1);
+  --hero-h:43vh;
+  /* Tarjetas apaisadas (16:9, como Google TV): más bajas y más anchas, entran la fila anterior y la siguiente. */
+  --card-w:204px;--card-h:115px;--card-gap:24px;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
@@ -60,32 +67,37 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 .btn .ico{font-size:12px;line-height:1}
 
 /* ---------- Filas ---------- */
-.rows-viewport{position:fixed;left:0;right:0;bottom:0;top:var(--hero-h);overflow:hidden;z-index:2}
+/* Bordes de arriba y abajo esfumados: la fila anterior asoma arriba y la siguiente abajo, sin cortes secos. */
+.rows-viewport{position:fixed;left:0;right:0;bottom:0;top:var(--hero-h);overflow:hidden;z-index:2;
+  -webkit-mask-image:linear-gradient(180deg,#0000 0,#000 64px,#000 calc(100% - 56px),#0000 100%);
+  mask-image:linear-gradient(180deg,#0000 0,#000 64px,#000 calc(100% - 56px),#0000 100%)}
 #catalog.no-hero .rows-viewport{top:76px}
-.rows-scroll{transition:transform .55s var(--glide);will-change:transform;padding-bottom:40vh}
+.rows-scroll{transition:transform .62s var(--glide);will-change:transform;padding-bottom:40vh}
 .rows{margin-top:4px}
-.row{margin:0 0 6px;opacity:.55;transition:opacity .45s ease;animation:row-in .45s var(--ease) both;animation-delay:calc(var(--i,0) * 55ms)}
+.row{margin:0 0 4px;opacity:.5;transition:opacity .5s ease;animation:row-in .45s var(--ease) both;animation-delay:calc(var(--i,0) * 55ms)}
 .row.is-active{opacity:1}
 @keyframes row-in{from{opacity:0;transform:translate3d(0,18px,0)}}
-.row h2{padding:0 40px;margin:0;font-size:16px;font-weight:600;color:#aab6c1;transition:color .25s,transform .3s var(--ease);transform-origin:left}
+.row h2{padding:0 40px;margin:0;font-size:16px;font-weight:600;color:#aab6c1;transition:color .3s,transform .45s var(--glide);transform-origin:left}
 .row.is-active h2{color:#fff;transform:translate3d(4px,0,0)}
 /* La fila se desliza entera (transform, en la placa de video): la tarjeta elegida queda en el primer lugar. */
-.track{display:flex;gap:16px;padding:24px 40px 26px;transition:transform .5s var(--glide)}
+.track{display:flex;gap:var(--card-gap);padding:16px 40px 20px;transition:transform .6s var(--glide)}
 /* Sólo la fila activa en su propia capa de la placa de video (menos memoria y sin parpadeos). */
 .row.is-active .track{will-change:transform}
-.card{position:relative;flex:0 0 148px;width:148px;text-align:left;border-radius:10px;contain:layout style;
-  transition:transform .38s var(--glide)}
-.poster-wrap{position:relative;display:block;width:148px;height:222px;border-radius:10px;box-shadow:0 6px 16px #0006}
+.card{position:relative;flex:0 0 var(--card-w);width:var(--card-w);text-align:left;border-radius:12px;contain:layout style;
+  transition:transform .42s var(--spring),opacity .35s ease}
+/* En la fila elegida, las demás tarjetas bajan un poco el brillo: el foco resalta y el cambio de una a otra se nota suave. */
+.row.is-active .track:focus-within .card:not(:focus){opacity:.72}
+.poster-wrap{position:relative;display:block;width:var(--card-w);height:var(--card-h);border-radius:12px;box-shadow:0 6px 16px #0006}
 /* Borde y sombra de la tarjeta elegida: una capa aparte que sólo cambia de opacidad (no se redibuja). */
-.poster-wrap::after{content:"";position:absolute;inset:0;border-radius:10px;box-shadow:0 0 0 3px #fff,0 18px 34px #000c;
-  opacity:0;transform:scale(1.04);transition:opacity .25s ease,transform .38s var(--glide);pointer-events:none}
-.poster{display:block;width:148px;height:222px;border-radius:10px;object-fit:cover;background:linear-gradient(150deg,#1b232c,#0e1318)}
-.card .name{display:block;margin-top:9px;font-size:12px;line-height:1.25;color:#8f9ca8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .2s}
+.poster-wrap::after{content:"";position:absolute;inset:0;border-radius:12px;box-shadow:0 0 0 3px #fff,0 16px 34px #000c;
+  opacity:0;transform:scale(1.05);transition:opacity .3s ease,transform .45s var(--glide);pointer-events:none}
+.poster{display:block;width:var(--card-w);height:var(--card-h);border-radius:12px;object-fit:cover;object-position:center 25%;background:linear-gradient(150deg,#1b232c,#0e1318)}
+.card .name{display:block;margin-top:10px;font-size:12.5px;line-height:1.25;color:#8f9ca8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .25s,transform .42s var(--glide)}
 .card .watch{position:absolute;left:10px;right:10px;bottom:10px;height:4px;border-radius:2px;background:#000000a6;overflow:hidden}
 .card .watch i{display:block;height:100%;background:var(--accent);border-radius:2px;transform-origin:left}
 .card:hover .poster-wrap::after{opacity:.45;transform:none}
-/* La tarjeta elegida: se agranda, se eleva y gana borde y sombra (bien visible desde el sillón). */
-.card:focus{outline:none;transform:translate3d(0,-6px,0) scale(1.12);z-index:3}
+/* La tarjeta elegida: se agranda con un pequeño rebote, se eleva y gana borde y sombra. */
+.card:focus{outline:none;transform:translate3d(0,-5px,0) scale(1.09);z-index:3}
 .card:focus .poster-wrap::after{opacity:1;transform:none}
 .card:focus .name{color:#fff;font-weight:600}
 .status{margin:6px 40px;min-height:18px;font-size:13px;color:var(--muted)}
@@ -135,9 +147,7 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 .related h3{margin:0 0 10px;font-size:15px;font-weight:600;color:#eef2f5}
 .related-track{display:flex;gap:14px;overflow-x:auto;padding:14px 6px 22px;scrollbar-width:none;scroll-behavior:smooth}
 .related-track::-webkit-scrollbar{display:none}
-.related-track .card{flex:0 0 118px;width:118px}
-.related-track .poster-wrap{width:118px;height:177px}
-.related-track .poster{width:118px;height:177px}
+.related-track{--card-w:200px;--card-h:113px}
 
 /* ---------- Reproductor ---------- */
 #player{position:fixed;inset:0;z-index:40;background:#000;animation:sheet-fade .25s ease both}
@@ -148,6 +158,14 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 .player-controls{position:absolute;inset:auto 0 0;padding:70px 34px 24px;background:linear-gradient(0deg,#000000f0,#00000000);z-index:3;transition:opacity .25s,transform .3s var(--ease)}
 #player.idle .player-top{opacity:0;transform:translate3d(0,-12px,0);pointer-events:none}
 #player.idle .player-controls{opacity:0;transform:translate3d(0,14px,0);pointer-events:none}
+/* Subtítulos dibujados por la app (no los de Edge): tamaño y altura configurables desde el reproductor. */
+.subtitle-box{position:absolute;left:8vw;right:8vw;bottom:var(--sub-bottom,22vh);z-index:2;display:flex;flex-direction:column;align-items:center;gap:.18em;
+  font-size:var(--sub-size,3.4vh);line-height:1.32;font-weight:600;text-align:center;pointer-events:none;transition:bottom .35s var(--glide)}
+.subtitle-box .cue{max-width:100%;padding:.08em .45em;border-radius:.22em;background:#000000a8;color:#fff;white-space:pre-line;
+  text-shadow:0 1px 3px #000;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.subtitle-box .cue.sample{color:#d6fff1}
+/* Con los controles a la vista, los subtítulos suben para no quedar tapados. */
+#player:not(.idle) .subtitle-box{bottom:max(var(--sub-bottom,22vh),190px)}
 .progress{height:4px;border-radius:2px;background:#ffffff33;overflow:hidden;margin-bottom:16px}
 #progressFill{height:100%;background:#fff;transform-origin:left;transform:scaleX(0)}
 .controls-row{display:flex;align-items:center;gap:9px}
