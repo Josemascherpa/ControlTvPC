@@ -25,6 +25,7 @@ function framex(url, videoUrl) {
       : { ...movie, success: true, genres: ['Action'], runtime: 90, original_language: 'es' };
   }
   if (path === '/api/season') return { success: true, season_number: 1, episodes: [{ episode_number: 1, name: 'Piloto', overview: 'El comienzo.', still: '', vote_average: 8 }] };
+  if (path === '/api/discover' || path === '/api/trending') return { success: true, results: [{ ...movie, id: 3, title: 'Película de la sección' }] };
   if (path === '/api/providers') return { providers: [{ id: 'test', name: 'Servidor de prueba', tagline: 'Local', status: 'available' }] };
   if (path === '/api/stream') return { success: true, provider: 'test', sources: [{ url: videoUrl, type: 'mp4', quality: 'Muestra local', server: 'Local', audio: 'es' }], subtitles: [], alternates: [] };
   return null;
@@ -156,6 +157,23 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
   assert.match(await evaluate('document.getElementById("playingMeta").textContent'), /T1 E1/);
   await evaluate('window.__controlTvBack()');
   assert.equal(await evaluate('document.getElementById("player").hidden'), true);
+
+  assert.equal(await evaluate('window.__controlTvBack()'), true); // cierra la ficha de la serie
+  // Menú: Películas arma sus filas (sin clave de TMDB, con FrameX) y el foco se queda en el menú.
+  await evaluate('[...document.querySelectorAll(".menu-item")].find((b) => b.textContent === "Películas").focus()');
+  await key('Enter', 13);
+  await until('document.querySelectorAll(".row:not(.skeleton)").length > 3');
+  assert.equal(await evaluate('document.activeElement.textContent'), 'Películas');
+  assert.ok(apiCalls.includes('/api/discover') && apiCalls.includes('/api/trending'));
+  assert.equal(await evaluate('document.querySelector(".row h2").textContent'), 'Tendencias');
+  // Aviso legal: se abre desde el menú y Atrás lo cierra.
+  await evaluate('document.getElementById("legalBtn").click()');
+  assert.match(await evaluate('document.getElementById("legal").textContent'), /no aloja ningún archivo/);
+  assert.equal(await evaluate('window.__controlTvBack()'), true);
+  assert.equal(await evaluate('document.getElementById("legal").hidden'), true);
+  // Inicio vuelve al catálogo principal.
+  assert.equal(await evaluate('window.__controlTvHome()'), true);
+  await until('document.querySelectorAll(".card").length===2 && document.activeElement.id==="heroPlay"');
 
   // Lo visto queda guardado en el navegador: al recargar, el catálogo sale sin esperar a la API.
   apiCalls.length = 0;

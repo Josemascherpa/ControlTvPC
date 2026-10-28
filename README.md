@@ -42,6 +42,10 @@ notebook ──HDMI──> tele
 | Pausa | Play/pausa del video |
 | Pestaña Mouse | Touchpad: mueve la flecha propia de la tele; tocar = clic; dos dedos = ruedita |
 
+Arriba está el menú: **Inicio, Películas, Series, Anime, Categorías** (Drama, Policiales, Terror…)
+y **Legal** (descargo de responsabilidad y DMCA). Recorriendo las filas, el destacado se achica y se
+ven tres filas enteras: la anterior, la elegida y la siguiente.
+
 En el reproductor, con los controles a la vista: subtítulos, **tamaño y altura de los subtítulos**
 (quedan guardados), audio y siguiente episodio.
 
@@ -68,6 +72,21 @@ Para sacarlo del inicio automático: `desinstalar.ps1`.
 - El Cine no necesita cuenta: usa el catálogo público de FrameX y sólo reproduce con **audio o
   subtítulos en español**. Si un servidor no responde, prueba con otro automáticamente.
 
+## Más títulos con TMDB (opcional, gratis)
+
+Sin nada más, Películas, Series y Categorías salen del catálogo de FrameX (filtra sólo por tipo y
+género). Con una clave de [TMDB](https://www.themoviedb.org) se suman **Anime**, filas por plataforma
+(Netflix, HBO, Disney+, Prime Video, Apple TV+), **Cine argentino** y **habladas en español**, con
+títulos y sinopsis en español:
+
+1. Creá una cuenta en themoviedb.org y pedí la clave en *Configuración → API* (uso personal).
+2. Copiá `ui/ajustes.ejemplo.json` como `ui/ajustes.json` y pegá ahí tu **API Key** (o el *token de lectura*).
+3. Reabrí el Cine (botón Inicio no alcanza: recargá o reiniciá ControlTv).
+
+`ui/ajustes.json` no se sube a git. TMDB no tiene canales de TV en vivo: las "cadenas" son las
+plataformas que producen las series. Qué títulos tienen audio o subtítulos en español se sabe recién
+al reproducir (lo deciden los servidores): si un título no los tiene, la ficha lo avisa.
+
 ## Personalizar
 
 Todo lo del servicio vive en `%LOCALAPPDATA%\ControlTvPC`:
@@ -86,6 +105,8 @@ ui/                       EL CINE: la app completa (html, css, fuentes, js compi
 web/
   cine/main.ts            pantalla: destacado, filas, ficha, buscador, reproductor y subtítulos
   cine/library.ts         API de FrameX: catálogo, búsqueda, servidores en español, subtítulos
+  cine/sections.ts        el menú: secciones, categorías y las filas de cada una (sólo datos)
+  cine/tmdb.ts            API oficial de TMDB para las filas (opcional, con la clave de ui/ajustes.json)
   cine/translator.ts      sinopsis en español (una vez por texto)
   cine/store.ts           lo guardado en el navegador (IndexedDB)
   inject.ts               lo que agrega la notebook: cursor oculto, avisos y barra de volumen

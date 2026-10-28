@@ -8,6 +8,7 @@
 <!-- La app consulta internet directo: las conexiones se abren mientras carga la página. -->
 <link rel="preconnect" href="https://api.framextv.xyz" crossorigin>
 <link rel="preconnect" href="https://image.tmdb.org">
+<link rel="preconnect" href="https://api.themoviedb.org" crossorigin>
 <link rel="preload" href="fonts/inter.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="cine.css">
 </head>
@@ -17,12 +18,15 @@
   <a class="brand" id="brand" href="#" aria-label="Volver al principio del catálogo">
     <span class="brand-dot"></span><span class="brand-name">Cine</span>
   </a>
+  <!-- Secciones: los botones los arma la app (sections.ts). -->
+  <nav id="menu" class="menu" aria-label="Secciones"></nav>
   <form id="searchForm" role="search">
     <input id="search" type="search" placeholder="Buscar películas o series" aria-label="Buscar películas o series" maxlength="80" autocomplete="off" spellcheck="false">
     <button id="searchGo" class="icon-btn" type="submit" aria-label="Buscar">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
     </button>
   </form>
+  <button id="legalBtn" class="menu-item legal-btn" type="button">Legal</button>
 </header>
 
 <main id="catalog">
@@ -32,10 +36,12 @@
     <img id="heroImageNext" class="hero-image" alt="" decoding="async">
     <div class="hero-shade"></div>
     <div class="hero-copy" id="heroCopy">
-      <p class="eyebrow" id="heroEyebrow">Destacado</p>
-      <h1 id="heroTitle"></h1>
-      <p class="meta" id="heroMeta"></p>
-      <p class="overview" id="heroOverview"></p>
+      <div class="hero-text">
+        <p class="eyebrow" id="heroEyebrow">Destacado</p>
+        <h1 id="heroTitle"></h1>
+        <p class="meta" id="heroMeta"></p>
+        <p class="overview" id="heroOverview"></p>
+      </div>
       <div class="actions" id="heroActions">
         <button id="heroPlay" class="btn primary" type="button"><span class="ico">▶</span>Reproducir</button>
         <button id="heroInfo" class="btn" type="button"><span class="ico">ⓘ</span>Más información</button>
@@ -47,7 +53,7 @@
     <div id="rowsScroll" class="rows-scroll">
       <section id="rows" class="rows" aria-label="Catálogo"></section>
       <p id="status" class="status" role="status">Cargando catálogo…</p>
-      <p id="hint" class="hint">Flechas para moverte · OK para elegir · Atrás para volver · Escribí en el celular para buscar</p>
+      <p class="hint">Cineapp no aloja ningún archivo: sólo enlaza a servicios de terceros. Más información en Legal - DMCA (arriba a la derecha).</p>
     </div>
   </div>
 </main>
@@ -75,6 +81,23 @@
       <h3>También te puede gustar</h3>
       <div class="related-track" id="relatedTrack"></div>
     </div>
+  </div>
+</section>
+
+<section id="legal" hidden aria-labelledby="legalTitle">
+  <div class="legal-body">
+    <p class="eyebrow">Legal - DMCA</p>
+    <h2 id="legalTitle">Descargo de responsabilidad</h2>
+    <p>Cineapp no aloja ningún archivo: simplemente enlaza a servicios de terceros. Los problemas legales
+      deben tratarse con los proveedores de los archivos y servicios.</p>
+    <p>Cineapp no se hace responsable de los archivos multimedia mostrados por los proveedores de video.</p>
+    <h3>DMCA</h3>
+    <p>Si sos titular de derechos sobre algún contenido, el pedido de retiro tiene que hacerse al proveedor
+      que lo aloja: Cineapp no almacena, sube ni transmite archivos propios.</p>
+    <h3>Datos</h3>
+    <p>Títulos, sinopsis e imágenes: TMDB. Este producto usa la API de TMDB pero no está avalado ni
+      certificado por TMDB.</p>
+    <button id="legalClose" class="btn primary" type="button">Volver</button>
   </div>
 </section>
 

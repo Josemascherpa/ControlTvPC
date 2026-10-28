@@ -7,8 +7,10 @@
   --glide:cubic-bezier(.16,1,.3,1);
   /* Foco con un pequeño rebote al llegar. */
   --spring:cubic-bezier(.34,1.42,.64,1);
-  --hero-h:43vh;
-  /* Tarjetas apaisadas (16:9, como Google TV): más bajas y más anchas, entran la fila anterior y la siguiente. */
+  /* Dónde empiezan las filas: justo debajo del texto del destacado. Con eso entran tres filas enteras
+     (la anterior, la elegida y la siguiente) en 720 px de alto. */
+  --rows-top:226px;
+  /* Tarjetas apaisadas (16:9, como Google TV). */
   --card-w:204px;--card-h:115px;--card-gap:24px;
 }
 *{box-sizing:border-box}
@@ -34,30 +36,43 @@ button:focus,input:focus,a:focus{outline:3px solid #fff;outline-offset:3px}
 .brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:700;letter-spacing:.2px;border-radius:10px;padding:4px 8px;margin-left:-8px;transition:background .2s,transform .2s var(--lift)}
 .brand:focus{outline:none;background:#ffffff1f;transform:scale(1.06)}
 .brand-dot{width:9px;height:9px;border-radius:3px;background:var(--accent);box-shadow:0 0 0 4px #7ce8c429}
+.menu{display:flex;align-items:center;gap:4px}
+.menu-item{height:36px;padding:0 15px;border-radius:999px;font-size:14px;font-weight:600;color:#aeb9c3;white-space:nowrap;
+  transition:background .25s ease,color .25s ease,transform .3s var(--spring)}
+.menu-item:hover{background:#ffffff14;color:#fff}
+.menu-item.is-current{color:#fff;background:#ffffff1f;box-shadow:inset 0 -2px 0 var(--accent)}
+.menu-item:focus{outline:none;background:#fff;color:#0b0d10;transform:scale(1.07)}
 #searchForm{display:flex;align-items:center;gap:8px;margin-left:auto}
-#search{width:280px;height:40px;border-radius:999px;border:1px solid #2b3540;background:#10161dcc;padding:0 16px;color:#fff;transition:width .3s var(--ease),border-color .18s,background .18s,box-shadow .18s}
+#search{width:220px;height:40px;border-radius:999px;border:1px solid #2b3540;background:#10161dcc;padding:0 16px;color:#fff;transition:width .3s var(--ease),border-color .18s,background .18s,box-shadow .18s}
 #search::placeholder{color:#7e8b97}
-#search:focus{width:440px;border-color:#7ce8c4;background:#0b1015;outline:none;box-shadow:0 0 0 4px #7ce8c42e}
+#search:focus{width:340px;border-color:#7ce8c4;background:#0b1015;outline:none;box-shadow:0 0 0 4px #7ce8c42e}
 #searchGo{width:40px;height:40px}
 #searchForm.is-busy #searchGo svg{animation:spin .8s linear}
 @keyframes spin{to{transform:rotate(1turn)}}
 
 /* ---------- Destacado (el título elegido) ---------- */
-#hero{position:fixed;inset:0 0 auto;height:var(--hero-h);min-height:300px;overflow:hidden;z-index:1}
+#hero{position:fixed;inset:0;overflow:hidden;z-index:1}
 .hero-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 22%;opacity:0;transform:scale(1.035);
-  transition:opacity .55s ease,transform 1.4s var(--ease);will-change:opacity}
+  transition:opacity .8s ease,transform 2.4s var(--glide);will-change:opacity}
 .hero-image.is-shown{opacity:1;transform:none}
-.hero-shade{position:absolute;inset:0;background:linear-gradient(90deg,#07090cf7 0%,#07090cd1 32%,#07090c55 64%,#07090c00 100%),linear-gradient(0deg,#07090c 2%,#07090c00 46%)}
-.hero-copy{position:absolute;left:40px;bottom:22px;width:min(660px,60vw);z-index:2;transition:opacity .18s ease,transform .3s var(--ease)}
-/* Cambio de título: el texto sale y entra con un desliz corto. */
-.hero-copy.is-changing{opacity:0;transform:translate3d(0,8px,0);transition-duration:.12s}
+.hero-shade{position:absolute;inset:0;background:linear-gradient(90deg,#07090cf7 0%,#07090cd1 32%,#07090c55 64%,#07090c00 100%),linear-gradient(0deg,#07090c 4%,#07090ccc 34%,#07090c00 70%)}
+.hero-copy{position:absolute;left:40px;top:74px;width:min(640px,56vw);z-index:2}
+/* Cambio de título: el texto anterior se esfuma y el nuevo entra con un desliz corto (dos tiempos,
+   no un salto). Recorriendo rápido, queda esfumado hasta que el control se detiene. */
+.hero-text{transition:opacity .34s ease,transform .5s var(--glide)}
+.hero-copy.is-changing .hero-text{opacity:0;transform:translate3d(-10px,0,0);transition:opacity .13s ease,transform .13s ease}
 .eyebrow{margin:0 0 10px;font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:var(--accent)}
 /* Una sola línea: un título largo no empuja el destacado hasta debajo de la barra de arriba. */
-h1{margin:0 0 10px;font-size:clamp(30px,3.7vw,46px);line-height:1.12;letter-spacing:-1.1px;font-weight:800;text-shadow:0 2px 24px #0008;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+h1{margin:0 0 8px;font-size:clamp(28px,3vw,38px);line-height:1.12;letter-spacing:-1.1px;font-weight:800;text-shadow:0 2px 24px #0008;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 .meta{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin:0 0 10px;font-size:13.5px;color:#c3cdd6}
-.overview{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:0 0 16px;max-width:58ch;font-size:15px;line-height:1.5;color:#d7dee5}
-.actions{display:flex;gap:12px;flex-wrap:wrap;transition:opacity .25s ease,transform .3s var(--ease)}
+.overview{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:0 0 16px;max-width:58ch;font-size:14.5px;line-height:1.45;color:#d7dee5}
+/* Alturas fijas: el lugar de los botones (y de las filas) no depende del largo del texto. */
+#heroEyebrow{height:14px}
+#heroTitle{height:1.15em}
+#heroMeta{height:18px;flex-wrap:nowrap;overflow:hidden}
+#heroOverview{height:2.9em}
+.actions{display:flex;gap:12px;flex-wrap:wrap;transition:opacity .35s ease,transform .5s var(--glide)}
 /* Mientras se recorren las filas, el destacado muestra la tarjeta elegida y esconde sus botones. */
 .hero-copy.is-preview .actions{opacity:0;transform:translate3d(0,8px,0);pointer-events:none}
 .btn{display:inline-flex;align-items:center;gap:9px;height:46px;padding:0 24px;border-radius:999px;background:#ffffff1f;font-size:14.5px;font-weight:600;transition:background .15s,transform .22s var(--lift),box-shadow .22s}
@@ -68,28 +83,33 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 
 /* ---------- Filas ---------- */
 /* Bordes de arriba y abajo esfumados: la fila anterior asoma arriba y la siguiente abajo, sin cortes secos. */
-.rows-viewport{position:fixed;left:0;right:0;bottom:0;top:var(--hero-h);overflow:hidden;z-index:2;
-  -webkit-mask-image:linear-gradient(180deg,#0000 0,#000 64px,#000 calc(100% - 56px),#0000 100%);
-  mask-image:linear-gradient(180deg,#0000 0,#000 64px,#000 calc(100% - 56px),#0000 100%)}
+.rows-viewport{position:fixed;left:0;right:0;bottom:0;top:var(--rows-top);overflow:hidden;z-index:2;
+  -webkit-mask-image:linear-gradient(180deg,#0000 0,#000 14px,#000 calc(100% - 40px),#0000 100%);
+  mask-image:linear-gradient(180deg,#0000 0,#000 14px,#000 calc(100% - 40px),#0000 100%)}
 #catalog.no-hero .rows-viewport{top:76px}
-.rows-scroll{transition:transform .62s var(--glide);will-change:transform;padding-bottom:40vh}
+.rows-scroll{transition:transform .7s var(--glide);will-change:transform;padding-bottom:40vh}
 .rows{margin-top:4px}
-.row{margin:0 0 4px;opacity:.5;transition:opacity .5s ease;animation:row-in .45s var(--ease) both;animation-delay:calc(var(--i,0) * 55ms)}
+.row{margin:0;opacity:.55;transition:opacity .55s ease;animation:row-in .45s var(--ease) both;animation-delay:calc(var(--i,0) * 55ms)}
 .row.is-active{opacity:1}
 @keyframes row-in{from{opacity:0;transform:translate3d(0,18px,0)}}
-.row h2{padding:0 40px;margin:0;font-size:16px;font-weight:600;color:#aab6c1;transition:color .3s,transform .45s var(--glide);transform-origin:left}
+.row h2{padding:0 40px;margin:0;font-size:15px;line-height:20px;font-weight:600;color:#aab6c1;transition:color .3s,transform .45s var(--glide);transform-origin:left}
 .row.is-active h2{color:#fff;transform:translate3d(4px,0,0)}
 /* La fila se desliza entera (transform, en la placa de video): la tarjeta elegida queda en el primer lugar. */
-.track{display:flex;gap:var(--card-gap);padding:16px 40px 20px;transition:transform .6s var(--glide)}
+.track{display:flex;gap:var(--card-gap);padding:12px 40px 14px;transition:transform .65s var(--glide)}
 /* Sólo la fila activa en su propia capa de la placa de video (menos memoria y sin parpadeos). */
 .row.is-active .track{will-change:transform}
 .card{position:relative;flex:0 0 var(--card-w);width:var(--card-w);text-align:left;border-radius:12px;contain:layout style;
-  transition:transform .42s var(--spring),opacity .35s ease}
+  transition:transform .55s var(--glide),opacity .45s ease}
 /* En la fila elegida, las demás tarjetas bajan un poco el brillo: el foco resalta y el cambio de una a otra se nota suave. */
 .row.is-active .track:focus-within .card:not(:focus){opacity:.72}
-.poster-wrap{position:relative;display:block;width:var(--card-w);height:var(--card-h);border-radius:12px;box-shadow:0 6px 16px #0006}
+.poster-wrap{position:relative;display:block;width:var(--card-w);height:var(--card-h);border-radius:12px;box-shadow:0 6px 16px #0006;overflow:hidden;transition:box-shadow .45s ease}
+/* Brillo que cruza la tarjeta al elegirla: acompaña el paso de una tarjeta a otra. */
+.poster-wrap::before{content:"";position:absolute;inset:-20% auto -20% 0;width:45%;z-index:2;pointer-events:none;opacity:0;
+  background:linear-gradient(100deg,#fff0 0%,#ffffff2e 50%,#fff0 100%);transform:translate3d(-120%,0,0) skewX(-12deg)}
+.card.just-focused:focus .poster-wrap::before{animation:shine .9s .08s var(--glide) both}
+@keyframes shine{0%{opacity:1;transform:translate3d(-120%,0,0) skewX(-12deg)}100%{opacity:1;transform:translate3d(330%,0,0) skewX(-12deg)}}
 /* Borde y sombra de la tarjeta elegida: una capa aparte que sólo cambia de opacidad (no se redibuja). */
-.poster-wrap::after{content:"";position:absolute;inset:0;border-radius:12px;box-shadow:0 0 0 3px #fff,0 16px 34px #000c;
+.poster-wrap::after{content:"";position:absolute;inset:0;border-radius:12px;box-shadow:inset 0 0 0 3px #fff;z-index:3;
   opacity:0;transform:scale(1.05);transition:opacity .3s ease,transform .45s var(--glide);pointer-events:none}
 .poster{display:block;width:var(--card-w);height:var(--card-h);border-radius:12px;object-fit:cover;object-position:center 25%;background:linear-gradient(150deg,#1b232c,#0e1318)}
 .card .name{display:block;margin-top:10px;font-size:12.5px;line-height:1.25;color:#8f9ca8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .25s,transform .42s var(--glide)}
@@ -97,11 +117,17 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 .card .watch i{display:block;height:100%;background:var(--accent);border-radius:2px;transform-origin:left}
 .card:hover .poster-wrap::after{opacity:.45;transform:none}
 /* La tarjeta elegida: se agranda con un pequeño rebote, se eleva y gana borde y sombra. */
-.card:focus{outline:none;transform:translate3d(0,-5px,0) scale(1.09);z-index:3}
+.card:focus{outline:none;transform:translate3d(0,-4px,0) scale(1.08);z-index:3;transition:transform .5s var(--spring),opacity .3s ease}
+.card:focus .poster-wrap{box-shadow:0 16px 34px #000c}
+/* En el catálogo el nombre ya está en el destacado de arriba: las filas quedan más bajas y entran tres. */
+.rows .card .name{display:none}
+/* Las categorías: tarjetas con el nombre del género. */
+.genre-tile .poster-wrap{display:flex;align-items:flex-end;padding:14px 16px;background:linear-gradient(150deg,#22303d,#0f151b 70%);font-size:19px;font-weight:800;letter-spacing:-.3px;color:#eef3f6}
+.genre-tile.is-current .poster-wrap{background:linear-gradient(150deg,#1f6f59,#0f2b24 75%);color:#fff}
 .card:focus .poster-wrap::after{opacity:1;transform:none}
 .card:focus .name{color:#fff;font-weight:600}
 .status{margin:6px 40px;min-height:18px;font-size:13px;color:var(--muted)}
-.hint{margin:10px 40px 0;font-size:11.5px;letter-spacing:.3px;color:#5c6975}
+.hint{margin:10px 40px 0;font-size:11.5px;letter-spacing:.2px;color:#6a7783}
 
 /* ---------- Ficha ---------- */
 #details{position:fixed;inset:0;z-index:30;background:var(--bg);overflow:hidden}
@@ -148,6 +174,15 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 .related-track{display:flex;gap:14px;overflow-x:auto;padding:14px 6px 22px;scrollbar-width:none;scroll-behavior:smooth}
 .related-track::-webkit-scrollbar{display:none}
 .related-track{--card-w:200px;--card-h:113px}
+
+/* ---------- Legal ---------- */
+#legal{position:fixed;inset:0;z-index:35;display:flex;align-items:center;justify-content:center;background:#07090cf2;animation:sheet-fade .3s ease both}
+.legal-body{max-width:760px;padding:0 40px;animation:sheet-up .42s var(--ease) both}
+.legal-body h2{font-size:30px;font-weight:800}
+.legal-body h3{margin:20px 0 6px;font-size:15px;color:#fff}
+.legal-body p{margin:0 0 10px;font-size:15px;line-height:1.55;color:#c9d2da}
+.legal-body .btn{margin-top:22px}
+.legal-btn{margin-left:4px}
 
 /* ---------- Reproductor ---------- */
 #player{position:fixed;inset:0;z-index:40;background:#000;animation:sheet-fade .25s ease both}

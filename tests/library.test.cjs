@@ -281,3 +281,46 @@ test('biblioteca: limita respuesta, se recupera de errores de red y no cachea fa
   assert.ok((await library.query(query({ op: 'providers' }))).error);
   assert.deepEqual((await library.query(query({ op: 'providers' }))).providers, []);
 });
+
+test('filas del menú: sin clave de TMDB usa FrameX (tipo y género) y rechaza lo que sólo sabe TMDB', async () => {
+  const urls = [];
+  const library = new FramexLibrary(async (url) => {
+    urls.push(url);
+    return Response.json({ results: [{ id: '7', type: 'movie', title: 'Policial', year: '2020', rating: '7', backdrop: tmdb('w1280', 'b'), overview: 'x' }] });
+  });
+  const reply = await library.query(query({ op: 'shelf', type: 'movie', genres: '80', sort: 'top' }));
+  assert.deepEqual(reply.items.map((item) => item.title), ['Policial']);
+  assert.match(urls[0], /\/api\/discover\?type=movie&page=1&genre=80&sort=vote_count\.desc$/);
+  await library.query(query({ op: 'shelf', type: 'tv', trending: '1' }));
+  assert.match(urls[1], /\/api\/trending\?type=tv$/);
+  assert.ok((await library.query(query({ op: 'shelf', type: 'tv', genres: '16', language: 'ja' }))).error, 'Anime necesita TMDB');
+  assert.ok((await library.query(query({ op: 'shelf', type: 'tv', genres: '1;drop' }))).error);
+  assert.equal(urls.length, 2);
+});
+
+test('filas del menú: con TMDB, en español, con filtros y la clave sólo hacia TMDB', async () => {
+  const { tmdbAccess } = await import('../ui/js/web/cine/tmdb.js');
+  assert.equal(tmdbAccess('cualquier cosa'), null);
+  const requests = [];
+  const library = new FramexLibrary(async (url, init) => {
+    requests.push({ url, headers: init.headers });
+    return Response.json({ results: [{ id: 30, name: 'Anime de prueba', first_air_date: '2024-04-01', vote_average: 8.4, backdrop_path: '/fondo.jpg', poster_path: '/poster.jpg', overview: 'Sinopsis en español' }] });
+  }, null, null, false, tmdbAccess('0123456789abcdef0123456789abcdef'));
+  const reply = await library.query(query({ op: 'shelf', type: 'tv', genres: '16', language: 'ja' }));
+  assert.deepEqual(reply.items, [{
+    id: '30', type: 'tv', title: 'Anime de prueba', poster: 'https://image.tmdb.org/t/p/w342/poster.jpg',
+    backdrop: 'https://image.tmdb.org/t/p/w780/fondo.jpg', year: '2024', rating: '8.4', overview: 'Sinopsis en español',
+  }]);
+  const url = new URL(requests[0].url);
+  assert.equal(url.origin + url.pathname, 'https://api.themoviedb.org/3/discover/tv');
+  assert.equal(url.searchParams.get('language'), 'es-MX');
+  assert.equal(url.searchParams.get('with_genres'), '16');
+  assert.equal(url.searchParams.get('with_original_language'), 'ja');
+  // Con el token v4 la clave va en la cabecera, no en la dirección.
+  const bearer = new FramexLibrary(async (u, init) => { requests.push({ url: u, headers: init.headers }); return Response.json({ results: [] }); },
+    null, null, false, tmdbAccess('eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJ4In0.firma'));
+  await bearer.query(query({ op: 'shelf', type: 'movie', provider: '8' }));
+  assert.equal(requests[1].headers.Authorization, 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJ4In0.firma');
+  assert.doesNotMatch(requests[1].url, /eyJ/);
+  assert.match(requests[1].url, /with_watch_providers=8&watch_region=AR/);
+});

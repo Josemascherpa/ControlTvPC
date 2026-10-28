@@ -1,5 +1,6 @@
 import { asArray, asNullableNumber, asRecord, asString } from '../../shared/json.js';
 import type { KeyValueStore } from './store.js';
+import { tmdbResults, tmdbShelf, type ShelfQuery, type TmdbAccess } from './tmdb.js';
 import type { Translator } from './translator.js';
 
 /** Espera una traducción como mucho un rato: si tarda, se usa el texto original (no se demora la ficha). */
@@ -20,10 +21,12 @@ const SUBTITLE_BYTES = 512 * 1024;
 const CACHE_LIMIT = 150;
 /** Catálogo, fichas y búsquedas guardados en el navegador como mucho (los más viejos se borran). */
 const STORE_LIMIT = 400;
-const MAX_PENDING = 4;
+const MAX_PENDING = 6;
 const HOME_TTL = 5 * 60_000;
 const DETAIL_TTL = 10 * 60_000;
 const SEARCH_TTL = 2 * 60_000;
+/** Las filas del menú (Películas, Series, Anime, Categorías) cambian poco: media hora. */
+const SHELF_TTL = 30 * 60_000;
 const PROVIDER_TTL = 60_000;
 /** Una fuente encontrada sirve un rato (sus enlaces vencen): volver a "Reproducir" es instantáneo. */
 const STREAM_TTL = 15 * 60_000;
@@ -57,6 +60,7 @@ const GENRES_ES: Readonly<Record<string, string>> = {
   'Sci-Fi & Fantasy': 'Ciencia ficción y fantasía', 'Soap': 'Telenovela', 'Talk': 'Entrevistas', 'War & Politics': 'Bélica y política',
 };
 const ID = /^\d{1,12}$/;
+const GENRE_LIST = /^\d{1,6}(,\d{1,6}){0,3}$/;
 const PROVIDER_ID = /^[a-z_]{1,40}$/;
 const SUBTITLE_HOST = /(^|\.)(strem\.io|vdrk\.site|opensubtitles\.org|opensubtitles\.com)$/;
 const NETWORK_ERROR = 'La fuente no respondió. Revisá la conexión y reintentá.';
@@ -226,6 +230,8 @@ export class FramexLibrary {
     private readonly store: KeyValueStore | null = null,
     /** Mantener abierta la conexión con la API mientras se usa (en las pruebas, no). */
     private readonly warm = false,
+    /** La API oficial de TMDB, si la persona puso su clave (si no, las filas salen de FrameX). */
+    private readonly tmdb: TmdbAccess | null = null,
   ) {
     void store?.trim(STORE_LIMIT).catch(() => undefined);
   }
@@ -242,7 +248,7 @@ export class FramexLibrary {
       const spanish = translator.known(item.overview);
       return spanish ? { ...item, overview: spanish } : item;
     };
-    if (op === 'home' || op === 'search') {
+    if (op === 'home' || op === 'search' || op === 'shelf') {
       translator.warm([
         ...(reply.hero ? [reply.hero.overview] : []),
         ...(reply.rows ?? []).flatMap((row) => row.items.map((item) => item.overview)),
@@ -297,6 +303,8 @@ export class FramexLibrary {
       return this.stream(plan, plan.provider).catch(() => rejected(NETWORK_ERROR));
     }
     if (op === 'search') return this.inSpanish(await this.search(params), op);
+    // Las filas de TMDB ya vienen en español; las de FrameX se traducen como el catálogo.
+    if (op === 'shelf') return this.tmdb ? this.shelf(params) : this.inSpanish(await this.shelf(params), op);
     if (op === 'translate') {
       const text = (params.get('text') ?? '').trim().slice(0, 1800);
       if (!text) return rejected('No hay texto para traducir.');
@@ -322,6 +330,56 @@ export class FramexLibrary {
       if (!looser) return { items: [] };
       const near = await this.searchPages(looser);
       return near.length > 0 ? { items: rankSearch(near, looser).slice(0, SEARCH_ITEMS), approximate: looser } : { items: [] };
+    });
+  }
+
+  /** ¿Hay clave de TMDB? (Anime, plataformas e idioma original sólo se pueden armar con TMDB). */
+  get hasTmdb(): boolean {
+    return this.tmdb !== null;
+  }
+
+  /**
+   * Una fila del menú (op=shelf): con TMDB, en español y con todos los filtros; sin TMDB, el
+   * "discover" de FrameX, que sólo filtra por tipo y género. Queda guardada como el catálogo.
+   */
+  private shelf(params: URLSearchParams): Promise<Contracts.LibraryReply> {
+    const type = params.get('type');
+    const sort = params.get('sort') ?? 'popular';
+    const value = (key: string, pattern: RegExp): string | null => {
+      const text = params.get(key) ?? '';
+      return text === '' || pattern.test(text) ? text : null;
+    };
+    const genres = value('genres', GENRE_LIST);
+    const language = value('language', /^[a-z]{2}$/);
+    const country = value('country', /^[A-Z]{2}$/);
+    const network = value('network', /^\d{1,7}$/);
+    const provider = value('provider', /^\d{1,7}$/);
+    if ((type !== 'movie' && type !== 'tv') || (sort !== 'popular' && sort !== 'top' && sort !== 'recent')
+      || genres === null || language === null || country === null || network === null || provider === null) {
+      return Promise.resolve(rejected('Fila no válida.'));
+    }
+    const shelf: ShelfQuery = { type, sort, genres, language, country, network, provider, trending: params.get('trending') === '1' };
+    const tmdb = this.tmdb;
+    if (!tmdb && (language || country || network || provider)) return Promise.resolve(rejected('Esta fila necesita TMDB.'));
+    const key = `shelf:${tmdb ? 'tmdb' : 'framex'}:${JSON.stringify(shelf)}`;
+    return this.cached(key, SHELF_TTL, async () => {
+      if (tmdb) {
+        const { path, query } = tmdbShelf(shelf, new Date().toISOString().slice(0, 10));
+        const raw = await this.json(tmdb.url(path, query), 20_000, tmdb.headers);
+        return { items: this.titles(tmdbResults(raw, type), RAIL_ITEMS) };
+      }
+      // FrameX: tendencias propias; "más votadas" por cantidad de votos (por puntaje salen títulos
+      // con un solo voto) y "recientes" del año en curso.
+      if (shelf.trending) {
+        const raw = asRecord(await this.json(`${ORIGIN}/api/trending?${new URLSearchParams({ type }).toString()}`));
+        return { items: this.titles(raw['results'], RAIL_ITEMS) };
+      }
+      const query = new URLSearchParams({ type, page: '1' });
+      if (genres) query.set('genre', genres);
+      if (sort === 'top') query.set('sort', 'vote_count.desc');
+      if (sort === 'recent') query.set('year', String(new Date().getFullYear()));
+      const raw = asRecord(await this.json(`${ORIGIN}/api/discover?${query.toString()}`));
+      return { items: this.titles(raw['results'], RAIL_ITEMS) };
     });
   }
 
@@ -466,9 +524,9 @@ export class FramexLibrary {
     return rejected('Operación no válida.');
   }
 
-  private async json(url: string, timeout = 20_000): Promise<unknown> {
+  private async json(url: string, timeout = 20_000, headers: Readonly<Record<string, string>> = {}): Promise<unknown> {
     const response = await this.request(url, {
-      signal: AbortSignal.timeout(timeout), redirect: 'error', headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(timeout), redirect: 'error', headers: { Accept: 'application/json', ...headers },
     });
     if (!response.ok || !response.body) throw new Error('Fuente no disponible');
     const text = await this.readText(response.body, MAX_BYTES);

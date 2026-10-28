@@ -1,6 +1,9 @@
 import type Hls from 'hls.js';
+import { asRecord, asString } from '../../shared/json.js';
 import { FramexLibrary } from './library.js';
+import { CATEGORIES, SECTIONS, categoryShelves, sectionShelves, shelfParams, type Category, type SectionId, type Shelf } from './sections.js';
 import { BrowserStore } from './store.js';
+import { tmdbAccess } from './tmdb.js';
 import { Translator } from './translator.js';
 
 declare global {
@@ -65,6 +68,11 @@ const heroMeta = byId<HTMLElement>('heroMeta');
 const heroOverview = byId<HTMLElement>('heroOverview');
 const heroPlay = byId<HTMLButtonElement>('heroPlay');
 const heroInfo = byId<HTMLButtonElement>('heroInfo');
+const heroActions = byId<HTMLElement>('heroActions');
+const menu = byId<HTMLElement>('menu');
+const legalBtn = byId<HTMLButtonElement>('legalBtn');
+const legalPanel = byId<HTMLElement>('legal');
+const legalClose = byId<HTMLButtonElement>('legalClose');
 const rowsEl = byId<HTMLElement>('rows');
 const catalogEl = byId<HTMLElement>('catalog');
 const statusEl = byId<HTMLElement>('status');
@@ -107,6 +115,9 @@ const retryBtn = byId<HTMLButtonElement>('retryBtn');
 let catalogRows: readonly Row[] = [];
 let catalogHero: Contracts.LibraryHero | null = null;
 let searchMode = false;
+let currentSection: SectionId = 'inicio';
+let currentCategory: Category | undefined = CATEGORIES[0];
+let legalTrigger: HTMLElement | null = null;
 let catalogToken = 0;
 let detailToken = 0;
 let currentItem: Contracts.LibraryTitle | null = null;
@@ -164,12 +175,29 @@ function busy(delta: 1 | -1): void {
  * instante y se actualiza por detrás sólo si cambió. Las imágenes las guarda la caché del navegador
  * (TMDB las entrega en WebP y con vencimiento largo).
  */
-const library = new FramexLibrary(undefined, new Translator(new BrowserStore('traducciones')), new BrowserStore('catalogo'), true);
+const library = readTmdbKey().then((tmdb) => new FramexLibrary(
+  undefined, new Translator(new BrowserStore('traducciones')), new BrowserStore('catalogo'), true, tmdb,
+));
+
+/**
+ * La clave de TMDB de la persona, en ui/ajustes.json ({"tmdb": "…"}; no se sube a git). Sin ese
+ * archivo el Cine anda igual, con el catálogo de FrameX (sin Anime ni filtros por idioma o plataforma).
+ */
+async function readTmdbKey(): Promise<ReturnType<typeof tmdbAccess>> {
+  try {
+    const response = await fetch('ajustes.json', { cache: 'no-cache' });
+    if (!response.ok) return null;
+    const raw: unknown = await response.json();
+    return tmdbAccess(asString(asRecord(raw)['tmdb']));
+  } catch {
+    return null;
+  }
+}
 
 async function api(op: string, params: Record<string, string> = {}, cancel?: AbortSignal, quiet = false): Promise<Contracts.LibraryReply> {
   if (!quiet) busy(1);
   try {
-    const result = await abortable(library.query(new URLSearchParams({ op, ...params })), cancel);
+    const result = await abortable((await library).query(new URLSearchParams({ op, ...params })), cancel);
     if (result.error) throw new Error(result.error);
     return result;
   } finally {
@@ -234,7 +262,7 @@ function focusElement(node: HTMLElement | null): void {
     node.classList.add('just-focused');
   }
   revealInTrack(node);
-  const row = node.closest('.row, .related, .seasons, .chips, .actions, #topbar, .controls-row');
+  const row = node.closest('.row, .related, .seasons, .chips, .actions, #topbar, .controls-row, .legal-body');
   if (row !== activeRow) {
     activeRow?.classList.remove('is-active');
     // La fila que se deja vuelve sola (con un desliz) a su inicio: al pasar de nuevo se ve prolija.
@@ -280,20 +308,30 @@ function revealInTrack(node: HTMLElement): void {
   else if (rect.right > box.right - margin) track.scrollBy({ left: rect.right - box.right + margin, behavior: 'smooth' });
 }
 
-/** Las filas del catálogo: la fila elegida sube hasta arriba de la lista (se desliza la lista entera). */
+/**
+ * Las filas del catálogo. Recorriéndolas, el destacado queda compacto (sin sus botones) y se ven
+ * tres filas enteras: la anterior, la elegida y la siguiente (se desliza la lista entera). En la
+ * barra de arriba o en el destacado, la lista baja lo justo para dejar ver sus botones.
+ */
 function revealRow(node: HTMLElement): void {
   const row = node.closest<HTMLElement>('.row');
   if (!row) {
     if (rowsViewport.contains(node)) return;
-    rowsScroll.style.transform = ''; // barra de arriba o destacado: la lista vuelve al principio
+    const gap = heroGap();
+    rowsScroll.style.transform = gap > 0 ? `translate3d(0, ${String(gap)}px, 0)` : '';
     return;
   }
-  // La fila anterior sigue asomando arriba (su mitad de abajo, con los nombres): se ve de dónde se
-  // viene, como en Google TV. La siguiente ya asoma abajo.
   const previous = row.previousElementSibling;
-  const peek = previous instanceof HTMLElement ? Math.round(previous.offsetHeight * 0.5) : 0;
-  const offset = row.offsetTop - rowsScroll.offsetTop - peek;
+  const above = previous instanceof HTMLElement ? previous.offsetHeight : 0;
+  const offset = row.offsetTop - rowsScroll.offsetTop - above;
   rowsScroll.style.transform = offset > 0 ? `translate3d(0, ${String(-offset)}px, 0)` : '';
+}
+
+/** Cuánto tiene que bajar la lista para no tapar los botones del destacado (Reproducir, Más información). */
+function heroGap(): number {
+  if (hero.hidden) return 0;
+  const bottom = heroCopy.offsetTop + heroActions.offsetTop + heroActions.offsetHeight;
+  return Math.max(0, bottom + 18 - rowsViewport.offsetTop);
 }
 
 /** En la ficha: lo elegido a la vista dentro de la ficha (desliz suave). */
@@ -309,28 +347,34 @@ function revealInDetails(node: HTMLElement): void {
 let heroFront: 0 | 1 = 0;
 let heroShown = '';
 let spotlightTimer = 0;
+let heroTextTimer = 0;
 
-/** Muestra un título en el destacado. El texto cambia enseguida; la imagen, con un fundido. */
+/**
+ * Muestra un título en el destacado, en dos tiempos: el texto anterior se esfuma y el nuevo entra
+ * con un desliz (antes cambiaba de golpe y se sentía seco). La imagen cambia con un fundido.
+ */
 function showSpotlight(item: Contracts.LibraryTitle, preview: boolean): void {
   const key = `${item.type}:${item.id}:${String(preview)}`;
   if (key === heroShown) return;
   heroShown = key;
+  // Los botones se esconden o aparecen junto con el movimiento de las filas, sin esperar al texto.
+  heroCopy.classList.toggle('is-preview', preview);
   heroCopy.classList.add('is-changing');
-  requestAnimationFrame(() => {
+  clearTimeout(heroTextTimer);
+  heroTextTimer = window.setTimeout(() => {
     heroEyebrow.textContent = preview ? (item.type === 'tv' ? 'Serie' : 'Película') : 'Destacado';
     heroTitle.textContent = item.title;
     heroMeta.textContent = metaText(item);
     heroOverview.textContent = translatedOverviews.get(item.overview) ?? item.overview;
-    heroCopy.classList.toggle('is-preview', preview);
     heroCopy.classList.remove('is-changing');
-  });
+  }, 140);
   // La imagen (y la sinopsis en español) esperan a que el control se quede quieto un instante:
   // recorriendo rápido no se bajan ni decodifican imágenes ni se traducen textos de más.
   clearTimeout(spotlightTimer);
   spotlightTimer = window.setTimeout(() => {
     void swapHeroImage(item.backdrop || item.poster);
     void spanishOverview(item, key);
-  }, 180);
+  }, 220);
 }
 
 /** Sinopsis traducidas (las pide el destacado; el servicio las guarda para siempre). */
@@ -374,6 +418,7 @@ function spotlightFor(node: HTMLElement): void {
   if (hero.hidden) return;
   const item = cardItems.get(node);
   if (item) showSpotlight(item, true);
+  else if (catalogHero && node.classList.contains('genre-tile')) showSpotlight(catalogHero, true);
   else if (catalogHero && (node === heroPlay || node === heroInfo || node.closest('#topbar'))) showSpotlight(catalogHero, false);
 }
 
@@ -600,11 +645,11 @@ function makeCard(item: Contracts.LibraryTitle, progress?: ProgressEntry): HTMLB
   return card;
 }
 
-function appendRow(name: string, cards: readonly HTMLElement[]): void {
+function appendRow(name: string, cards: readonly HTMLElement[], order = rowsEl.children.length): void {
   if (!cards.length) return;
   const section = document.createElement('section');
   section.className = 'row';
-  section.style.setProperty('--i', String(rowsEl.children.length)); // entrada escalonada
+  section.style.setProperty('--i', String(order)); // entrada escalonada
   const heading = document.createElement('h2');
   heading.textContent = name;
   const track = document.createElement('div');
@@ -622,10 +667,160 @@ function renderHome(): void {
   for (const row of catalogRows) appendRow(row.name, row.items.map((item) => cardFor(item)));
   hydrateAround(null);
   const uniqueCount = new Set(catalogRows.flatMap((row) => row.items).map((item) => `${item.type}:${item.id}`)).size;
-  setStatus(uniqueCount ? `${uniqueCount} títulos · Audio o subtítulos en español · Catálogo FrameX` : 'No hay títulos para mostrar.');
+  setStatus(uniqueCount ? `${uniqueCount} títulos · Audio o subtítulos en español` : 'No hay títulos para mostrar.');
   resetRows();
   rebuildNav();
-  focusInitial();
+  // Elegida desde el menú: el foco se queda en el menú (se ve el cambio y se baja cuando se quiere).
+  if (!menu.contains(document.activeElement)) focusInitial();
+  else revealRow(document.activeElement as HTMLElement);
+}
+
+// ---------- Secciones del menú (Películas, Series, Anime, Categorías) ----------
+
+const menuButtons = SECTIONS.map((section) => {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'menu-item';
+  button.textContent = section.label;
+  button.dataset['section'] = section.id;
+  button.addEventListener('click', () => { void openSection(section.id); });
+  menu.append(button);
+  return button;
+});
+
+function markSection(id: SectionId): void {
+  currentSection = id;
+  for (const button of menuButtons) button.classList.toggle('is-current', button.dataset['section'] === id);
+}
+
+/** Empieza a armar otra lista: cancela la búsqueda en curso y lo que se estaba cargando. */
+function beginCatalog(section: SectionId): number {
+  clearTimeout(searchTimer);
+  searchAbort?.abort();
+  searchAbort = null;
+  searchForm.classList.remove('is-busy');
+  searchMode = false;
+  if (document.activeElement !== search) search.value = '';
+  markSection(section);
+  return ++catalogToken;
+}
+
+async function openSection(id: SectionId): Promise<void> {
+  if (!player.hidden) stopPlayer();
+  if (!detailPanel.hidden) closeDetails();
+  if (id === 'inicio') {
+    await loadHome();
+    return;
+  }
+  const token = beginCatalog(id);
+  rowsEl.replaceChildren();
+  resetRows();
+  if (id === 'categorias') {
+    renderCategoryTiles();
+    if (currentCategory) await loadShelves(categoryShelves(currentCategory), token);
+    return;
+  }
+  const shelves = sectionShelves(id, (await library).hasTmdb);
+  if (token !== catalogToken) return;
+  if (!shelves.length) {
+    rebuildNav();
+    setStatus('Para ver Anime hace falta la clave gratuita de TMDB (ver el README: "Más títulos con TMDB").');
+    return;
+  }
+  await loadShelves(shelves, token);
+}
+
+/** Las categorías (Drama, Policiales…): una fila de géneros; al elegir uno, abajo salen sus títulos. */
+function renderCategoryTiles(): void {
+  const tiles = CATEGORIES.map((category) => {
+    const tile = document.createElement('button');
+    tile.type = 'button';
+    tile.className = `card genre-tile${category === currentCategory ? ' is-current' : ''}`;
+    const face = document.createElement('span');
+    face.className = 'poster-wrap';
+    face.textContent = category.name;
+    tile.append(face);
+    tile.addEventListener('click', () => {
+      if (category === currentCategory && rowsEl.children.length > 1) return;
+      currentCategory = category;
+      for (const other of tiles) other.classList.toggle('is-current', other === tile);
+      void loadShelves(categoryShelves(category), beginCatalog('categorias'));
+    });
+    return tile;
+  });
+  appendRow('Categorías', tiles);
+  rebuildNav();
+  if (!menu.contains(document.activeElement)) focusElement(tiles.find((tile) => tile.classList.contains('is-current')) ?? null);
+}
+
+/**
+ * Las filas de una sección, de a tres consultas a la vez: cada fila aparece apenas llega (lo
+ * guardado de la vez anterior, al instante). Lo que ya está arriba (los géneros) se conserva.
+ */
+async function loadShelves(shelves: readonly Shelf[], token: number): Promise<void> {
+  for (const row of rowsEl.querySelectorAll(':scope > .row:not(:has(.genre-tile))')) row.remove();
+  placed = new Set();
+  appendSkeleton(2);
+  setStatus('Cargando…');
+  busy(1);
+  let count = 0;
+  try {
+    for (let start = 0; start < shelves.length; start += 3) {
+      const batch = shelves.slice(start, start + 3);
+      const replies = await Promise.all(batch.map((shelf) => api('shelf', shelfParams(shelf), undefined, true).catch(() => null)));
+      if (token !== catalogToken) return;
+      for (const skeleton of rowsEl.querySelectorAll(':scope > .row.skeleton')) skeleton.remove();
+      batch.forEach((shelf, index) => {
+        const items = replies[index]?.items ?? [];
+        const first = items[0];
+        if (!first) return;
+        if (count === 0) showSectionHero(first);
+        count++;
+        appendRow(shelf.name, items.map((item) => cardFor(item)), index);
+      });
+      rebuildNav();
+      const focused = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+      hydrateAround(focused && rowsEl.contains(focused) ? focused : null);
+      if (focused) revealRow(focused);
+      else focusInitial();
+    }
+  } finally {
+    busy(-1);
+  }
+  if (token !== catalogToken) return;
+  for (const skeleton of rowsEl.querySelectorAll(':scope > .row.skeleton')) skeleton.remove();
+  setStatus(count ? 'Audio o subtítulos en español' : 'No se pudo cargar esta sección. Revisá la conexión y probá de nuevo.');
+}
+
+/** El destacado de una sección: su primer título (si no se está recorriendo una fila). */
+function showSectionHero(item: Contracts.LibraryTitle): void {
+  catalogHero = { ...item, genres: [] };
+  hero.hidden = false;
+  catalogEl.classList.remove('no-hero');
+  heroPlay.disabled = false;
+  heroInfo.disabled = false;
+  // Recorriendo títulos, el destacado muestra el elegido; sobre los géneros, la categoría nueva.
+  const active = document.activeElement;
+  const onTile = active instanceof HTMLElement && active.classList.contains('genre-tile');
+  const browsing = active instanceof HTMLElement && rowsEl.contains(active) && !onTile;
+  if (!browsing) {
+    heroShown = '';
+    showSpotlight(catalogHero, onTile);
+  }
+}
+
+// ---------- Legal ----------
+
+function openLegal(): void {
+  legalTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  legalPanel.hidden = false;
+  focusElement(legalClose);
+}
+
+function closeLegal(): void {
+  if (legalPanel.hidden) return;
+  legalPanel.hidden = true;
+  focusElement(legalTrigger?.isConnected ? legalTrigger : legalBtn);
 }
 
 /**
@@ -654,8 +849,11 @@ function renderResults(items: readonly Contracts.LibraryTitle[], query: string, 
 
 /** Mientras carga el catálogo: filas "esqueleto" con brillo de carga, en vez de una pantalla vacía. */
 function renderSkeleton(): void {
-  if (rowsEl.children.length > 0) return;
-  for (let row = 0; row < 3; row++) {
+  if (rowsEl.children.length === 0) appendSkeleton(3);
+}
+
+function appendSkeleton(count: number): void {
+  for (let row = 0; row < count; row++) {
     const section = document.createElement('section');
     section.className = 'row skeleton';
     section.style.setProperty('--i', String(row));
@@ -699,13 +897,9 @@ function renderHero(item: Contracts.LibraryHero): void {
 }
 
 async function loadHome(): Promise<void> {
-  clearTimeout(searchTimer);
-  searchAbort?.abort();
-  searchAbort = null;
-  searchForm.classList.remove('is-busy');
-  const token = ++catalogToken;
-  searchMode = false;
-  if (document.activeElement !== search) search.value = '';
+  const fromSection = currentSection !== 'inicio';
+  const token = beginCatalog('inicio');
+  if (fromSection) rowsEl.replaceChildren();
   catalogHero = null;
   setStatus('Cargando catálogo…');
   renderSkeleton();
@@ -760,7 +954,7 @@ function searchWhileTyping(): void {
 }
 
 function rebuildNav(): void {
-  navRows = [[brand, search, searchGo]];
+  navRows = [[brand, ...menuButtons, search, searchGo, legalBtn]];
   if (!hero.hidden) navRows.push([heroPlay, heroInfo]);
   for (const track of rowsEl.querySelectorAll<HTMLElement>('.track')) {
     const cards = [...track.querySelectorAll<HTMLElement>('.card')];
@@ -818,6 +1012,9 @@ function isCatalogRow(row: readonly HTMLElement[]): boolean {
  * principio de la fila. En el resto (botones, la ficha): donde se había quedado o lo más cercano.
  */
 function entryPoint(target: readonly HTMLElement[], from: HTMLElement): HTMLElement {
+  // Al menú o a los géneros se entra por lo que está elegido (la sección o categoría actual).
+  const current = target.find((node) => node.classList.contains('is-current'));
+  if (current) return current;
   if (isCatalogRow(target)) return target[0] as HTMLElement;
   const container = target[0]?.parentElement;
   const remembered = container ? rowMemory.get(container) : undefined;
@@ -1298,7 +1495,7 @@ function loadSubtitle(index: number): void {
   if (!subtitle || !element || element.src) return;
   let file = subtitleFiles.get(subtitle.url);
   if (!file) {
-    file = library.subtitle(subtitle.url)
+    file = library.then((source) => source.subtitle(subtitle.url))
       .then((text) => (text ? URL.createObjectURL(new Blob([text], { type: 'text/vtt' })) : null))
       .catch(() => null);
     subtitleFiles.set(subtitle.url, file);
@@ -1633,6 +1830,17 @@ function handleDetailsKey(event: KeyboardEvent): void {
   moveIn(detailRows, direction);
 }
 
+/** El aviso legal tiene un solo botón (Volver): las flechas no lo dejan. */
+function handleLegalKey(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeLegal();
+  } else if (event.key.startsWith('Arrow')) {
+    event.preventDefault();
+    focusElement(legalClose);
+  }
+}
+
 function handlePlayerKey(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault();
@@ -1683,6 +1891,10 @@ function back(): boolean {
     stopPlayer();
     return true;
   }
+  if (!legalPanel.hidden) {
+    closeLegal();
+    return true;
+  }
   if (!detailPanel.hidden) {
     closeDetails();
     return true;
@@ -1691,9 +1903,14 @@ function back(): boolean {
     void loadHome();
     return true;
   }
-  // Ya en el catálogo: vuelve al principio (el Cine es la única app, no hay a dónde salir).
-  if (document.activeElement !== heroPlay) {
+  // Ya en el catálogo: vuelve al principio de la sección y después a Inicio (el Cine es la única
+  // app, no hay a dónde salir).
+  if (document.activeElement !== heroPlay && !hero.hidden) {
     focusInitial();
+    return true;
+  }
+  if (currentSection !== 'inicio') {
+    void loadHome();
     return true;
   }
   return false;
@@ -1703,7 +1920,10 @@ function back(): boolean {
 function goToStart(): void {
   if (!player.hidden) stopPlayer();
   if (!detailPanel.hidden) closeDetails();
-  if (searchMode) void loadHome();
+  closeLegal();
+  // El botón Inicio lleva al destacado aunque el foco estuviera en el menú.
+  if (menu.contains(document.activeElement) && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  if (searchMode || currentSection !== 'inicio') void loadHome();
   else focusInitial();
 }
 
@@ -1716,6 +1936,7 @@ addEventListener('keydown', (event) => {
     setTimeout(() => { target.classList.remove('pressed'); }, 140);
   }
   if (!player.hidden) handlePlayerKey(event);
+  else if (!legalPanel.hidden) handleLegalKey(event);
   else if (!detailPanel.hidden) handleDetailsKey(event);
   else handleCatalogKey(event);
 }, { capture: false });
@@ -1769,6 +1990,8 @@ heroInfo.addEventListener('click', () => {
   if (item) void openDetails(item);
 });
 detailClose.addEventListener('click', closeDetails);
+legalBtn.addEventListener('click', openLegal);
+legalClose.addEventListener('click', closeLegal);
 detailPlay.addEventListener('click', () => {
   const item = currentItem;
   if (!item) return;
