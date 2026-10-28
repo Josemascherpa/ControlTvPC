@@ -1,4 +1,4 @@
-# Hace que Windows (y con él Edge) prefiera IPv4 cuando un sitio tiene las dos versiones, sin
+﻿# Hace que Windows (y con él Edge) prefiera IPv4 cuando un sitio tiene las dos versiones, sin
 # desactivar IPv6. Medido en esta red: por IPv4 las conexiones abren siempre en 20–100 ms; por IPv6 a
 # veces tardan 1–7 s o se traban más de 15 s. Eso frenaba el arranque de los videos, los saltos de
 # minuto y la carga de las imágenes del Cine (el servicio de la notebook ya usa IPv4 por su cuenta).
