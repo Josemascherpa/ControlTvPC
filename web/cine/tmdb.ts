@@ -72,6 +72,27 @@ export function tmdbShelf(shelf: ShelfQuery, today: string): { readonly path: st
   return { path: `/discover/${shelf.type}`, query };
 }
 
+/** ¿Se lee con letras latinas? (Sin japonés, coreano, chino, cirílico… Números y signos dan igual.) */
+export function isLatin(text: string): boolean {
+  return !/[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(text);
+}
+
+/**
+ * Algunos títulos (muchos animes) no tienen nombre en español en TMDB y llegan en su idioma original
+ * ("ちびまる子ちゃん"): se reemplazan por el nombre en inglés, que suele estar en letras latinas
+ * ("Chibi Maruko-chan"). Si tampoco hay, queda el original.
+ */
+export function withLatinTitles(
+  results: readonly Readonly<Record<string, unknown>>[], english: readonly Readonly<Record<string, unknown>>[],
+): readonly Readonly<Record<string, unknown>>[] {
+  const names = new Map(english.map((item) => [item['id'], asString(item['title'])]));
+  return results.map((item) => {
+    const title = asString(item['title']);
+    const other = names.get(item['id']) ?? '';
+    return !isLatin(title) && other && isLatin(other) ? { ...item, title: other } : item;
+  });
+}
+
 /**
  * Los resultados de TMDB con la forma de los de FrameX (la librería los valida igual, con el mismo
  * código): id, tipo, título, imágenes completas, año, puntaje y sinopsis.

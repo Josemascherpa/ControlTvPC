@@ -324,3 +324,25 @@ test('filas del menú: con TMDB, en español, con filtros y la clave sólo hacia
   assert.doesNotMatch(requests[1].url, /eyJ/);
   assert.match(requests[1].url, /with_watch_providers=8&watch_region=AR/);
 });
+
+test('filas del menú: un título en otro alfabeto (anime sin nombre en español) se muestra en letras latinas', async () => {
+  const { tmdbAccess } = await import('../ui/js/web/cine/tmdb.js');
+  const languages = [];
+  const library = new FramexLibrary(async (url) => {
+    const language = new URL(url).searchParams.get('language');
+    languages.push(language);
+    const spanish = language === 'es-MX';
+    if (new URL(url).searchParams.get('with_genres') === '18') return Response.json({ results: [{ id: 9, title: 'Drama', backdrop_path: '/d.jpg' }] });
+    return Response.json({ results: [
+      { id: 1, name: spanish ? 'ちびまる子ちゃん' : 'Chibi Maruko-chan', backdrop_path: '/a.jpg' },
+      { id: 2, name: spanish ? 'Los diarios de la boticaria' : 'The Apothecary Diaries', backdrop_path: '/b.jpg' },
+      { id: 3, name: spanish ? '名探偵コナン' : '名探偵コナン', backdrop_path: '/c.jpg' },
+    ] });
+  }, null, null, false, tmdbAccess('0123456789abcdef0123456789abcdef'));
+  const reply = await library.query(query({ op: 'shelf', type: 'tv', genres: '16', language: 'ja' }));
+  assert.deepEqual(reply.items.map((item) => item.title), ['Chibi Maruko-chan', 'Los diarios de la boticaria', '名探偵コナン']);
+  assert.deepEqual(languages, ['es-MX', 'en-US']);
+  // Si todos se leen en letras latinas, no hace falta el segundo pedido.
+  await library.query(query({ op: 'shelf', type: 'movie', genres: '18' }));
+  assert.deepEqual(languages, ['es-MX', 'en-US', 'es-MX']);
+});

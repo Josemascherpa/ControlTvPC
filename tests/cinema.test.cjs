@@ -40,6 +40,8 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
       res.end(videoBytes);
       return;
     }
+    // Sin la clave de TMDB de la persona (si la tiene): la prueba no sale a internet.
+    if (url.pathname === '/ajustes.json') { res.statusCode = 404; res.end(); return; }
     const file = normalize(join(ui, url.pathname === '/' ? 'index.html' : url.pathname.slice(1)));
     if (!file.startsWith(ui) || !existsSync(file)) { res.statusCode = 404; res.end(); return; }
     res.setHeader('Content-Type', MIME[extname(file)] ?? 'application/octet-stream');

@@ -1,6 +1,6 @@
 import { asArray, asNullableNumber, asRecord, asString } from '../../shared/json.js';
 import type { KeyValueStore } from './store.js';
-import { tmdbResults, tmdbShelf, type ShelfQuery, type TmdbAccess } from './tmdb.js';
+import { isLatin, tmdbResults, tmdbShelf, withLatinTitles, type ShelfQuery, type TmdbAccess } from './tmdb.js';
 import type { Translator } from './translator.js';
 
 /** Espera una traducción como mucho un rato: si tarda, se usa el texto original (no se demora la ficha). */
@@ -361,12 +361,16 @@ export class FramexLibrary {
     const shelf: ShelfQuery = { type, sort, genres, language, country, network, provider, trending: params.get('trending') === '1' };
     const tmdb = this.tmdb;
     if (!tmdb && (language || country || network || provider)) return Promise.resolve(rejected('Esta fila necesita TMDB.'));
-    const key = `shelf:${tmdb ? 'tmdb' : 'framex'}:${JSON.stringify(shelf)}`;
+    const key = `shelf2:${tmdb ? 'tmdb' : 'framex'}:${JSON.stringify(shelf)}`;
     return this.cached(key, SHELF_TTL, async () => {
       if (tmdb) {
         const { path, query } = tmdbShelf(shelf, new Date().toISOString().slice(0, 10));
-        const raw = await this.json(tmdb.url(path, query), 20_000, tmdb.headers);
-        return { items: this.titles(tmdbResults(raw, type), RAIL_ITEMS) };
+        const results = tmdbResults(await this.json(tmdb.url(path, query), 20_000, tmdb.headers), type);
+        if (results.every((item) => isLatin(asString(item['title'])))) return { items: this.titles(results, RAIL_ITEMS) };
+        // Algún título en otro alfabeto (anime sin nombre en español): la misma fila en inglés, una vez.
+        query.set('language', 'en-US');
+        const english = await this.json(tmdb.url(path, query), 20_000, tmdb.headers).then((raw) => tmdbResults(raw, type), () => []);
+        return { items: this.titles(withLatinTitles(results, english), RAIL_ITEMS) };
       }
       // FrameX: tendencias propias; "más votadas" por cantidad de votos (por puntaje salen títulos
       // con un solo voto) y "recientes" del año en curso.
