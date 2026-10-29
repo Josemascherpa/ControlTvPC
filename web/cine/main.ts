@@ -1,6 +1,6 @@
 import type Hls from 'hls.js';
 import { asRecord, asString } from '../../shared/json.js';
-import { FramexLibrary } from './library.js';
+import { FramexLibrary, hasSpanishAudio } from './library.js';
 import { CATEGORIES, SECTIONS, categoryShelves, sectionShelves, shelfParams, type Category, type SectionId, type Shelf } from './sections.js';
 import { BrowserStore } from './store.js';
 import { tmdbAccess } from './tmdb.js';
@@ -53,10 +53,17 @@ function byId<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
-const brand = byId<HTMLAnchorElement>('brand');
 const searchForm = byId<HTMLFormElement>('searchForm');
 const search = byId<HTMLInputElement>('search');
-const searchGo = byId<HTMLButtonElement>('searchGo');
+const searchPanel = byId<HTMLElement>('searchPanel');
+const searchSpinner = byId<HTMLElement>('searchSpinner');
+const keyboard = byId<HTMLElement>('keyboard');
+const rail = byId<HTMLElement>('rail');
+const railItems = byId<HTMLElement>('railItems');
+const livePanel = byId<HTMLElement>('live');
+const liveFrame = byId<HTMLIFrameElement>('liveFrame');
+const liveName = byId<HTMLElement>('liveName');
+const liveLoading = byId<HTMLElement>('liveLoading');
 const hero = byId<HTMLElement>('hero');
 const heroImages = [byId<HTMLImageElement>('heroImage'), byId<HTMLImageElement>('heroImageNext')] as const;
 const heroCopy = byId<HTMLElement>('heroCopy');
@@ -69,8 +76,6 @@ const heroOverview = byId<HTMLElement>('heroOverview');
 const heroPlay = byId<HTMLButtonElement>('heroPlay');
 const heroInfo = byId<HTMLButtonElement>('heroInfo');
 const heroActions = byId<HTMLElement>('heroActions');
-const menu = byId<HTMLElement>('menu');
-const legalBtn = byId<HTMLButtonElement>('legalBtn');
 const legalPanel = byId<HTMLElement>('legal');
 const legalClose = byId<HTMLButtonElement>('legalClose');
 const rowsEl = byId<HTMLElement>('rows');
@@ -110,6 +115,11 @@ const subtitlesBtn = byId<HTMLButtonElement>('subtitlesBtn');
 const audioBtn = byId<HTMLButtonElement>('audioBtn');
 const nextBtn = byId<HTMLButtonElement>('nextBtn');
 const playerStatus = byId<HTMLElement>('playerStatus');
+const qualityBtn = byId<HTMLButtonElement>('qualityBtn');
+const serverBtn = byId<HTMLButtonElement>('serverBtn');
+const playerMenu = byId<HTMLElement>('playerMenu');
+const playerMenuTitle = byId<HTMLElement>('playerMenuTitle');
+const playerMenuList = byId<HTMLElement>('playerMenuList');
 const retryBtn = byId<HTMLButtonElement>('retryBtn');
 
 let catalogRows: readonly Row[] = [];
@@ -145,6 +155,10 @@ let triedProviders: string[] = [];
 let returnToDetails = false;
 let resumeAt: number | null = null;
 let currentSubtitles: readonly Contracts.LibrarySubtitle[] = [];
+/** La fuente que se está viendo, las otras de ese servidor (otras calidades) y el servidor. */
+let currentSource: Contracts.LibrarySource | null = null;
+let currentSources: readonly Contracts.LibrarySource[] = [];
+let currentProvider = '';
 let subtitleIndex = -1;
 let hideTimer = 0;
 let lastPointerShow = 0;
@@ -214,6 +228,17 @@ function abortable<T>(task: Promise<T>, cancel: AbortSignal | undefined): Promis
   })]);
 }
 
+/** Un texto de estado; con `loading`, un círculo girando delante (algo se está cargando). */
+function showStatus(element: HTMLElement, text: string, loading = false): void {
+  element.textContent = text;
+  element.classList.toggle('loading', loading && text !== '');
+}
+
+/** La imagen grande (destacado y ficha): TMDB w1280, nítida en la tele (la de las tarjetas es w780). */
+function large(url: string): string {
+  return url.replace('/t/p/w780/', '/t/p/w1280/');
+}
+
 function metaText(item: Contracts.LibraryTitle, genres: readonly string[] = []): string {
   return [item.year, item.rating ? `${item.rating} ★` : '', item.type === 'tv' ? 'Serie' : 'Película', ...genres]
     .filter((part) => part !== '').join('  ·  ');
@@ -256,7 +281,8 @@ function focusElement(node: HTMLElement | null): void {
   if (!node) return;
   node.focus({ preventScroll: true });
   revealInTrack(node);
-  const row = node.closest('.row, .related, .seasons, .chips, .actions, #topbar, .controls-row, .legal-body');
+  const row = node.closest('.row, .related, .seasons, .chips, .actions, .rail-items, .key-row, .controls-row, .menu-list, .legal-body');
+  if (!rail.contains(node) && catalogEl.contains(node)) lastContentFocus = node;
   if (row !== activeRow) {
     activeRow?.classList.remove('is-active');
     // La fila que se deja vuelve sola (con un desliz) a su inicio: al pasar de nuevo se ve prolija.
@@ -304,26 +330,24 @@ function revealInTrack(node: HTMLElement): void {
 
 /**
  * Las filas del catálogo. Recorriéndolas, el destacado queda compacto (sin sus botones) y se ven
- * tres filas enteras: la anterior, la elegida y la siguiente (se desliza la lista entera). En la
- * barra de arriba o en el destacado, la lista baja lo justo para dejar ver sus botones.
+ * dos filas enteras: la elegida (arriba) y la siguiente; se desliza la lista entera. En el destacado
+ * o el buscador, la lista vuelve al principio (o baja lo justo para no tapar los botones).
  */
 function revealRow(node: HTMLElement): void {
   const row = node.closest<HTMLElement>('.row');
   if (!row) {
-    if (rowsViewport.contains(node)) return;
+    if (rowsViewport.contains(node) || rail.contains(node)) return;
     const gap = heroGap();
     rowsScroll.style.transform = gap > 0 ? `translate3d(0, ${String(gap)}px, 0)` : '';
     return;
   }
-  const previous = row.previousElementSibling;
-  const above = previous instanceof HTMLElement ? previous.offsetHeight : 0;
-  const offset = row.offsetTop - rowsScroll.offsetTop - above;
+  const offset = row.offsetTop - rowsScroll.offsetTop;
   rowsScroll.style.transform = offset > 0 ? `translate3d(0, ${String(-offset)}px, 0)` : '';
 }
 
 /** Cuánto tiene que bajar la lista para no tapar los botones del destacado (Reproducir, Más información). */
 function heroGap(): number {
-  if (hero.hidden) return 0;
+  if (hero.hidden || searchMode) return 0;
   const bottom = heroCopy.offsetTop + heroActions.offsetTop + heroActions.offsetHeight;
   return Math.max(0, bottom + 18 - rowsViewport.offsetTop);
 }
@@ -366,7 +390,7 @@ function showSpotlight(item: Contracts.LibraryTitle, preview: boolean): void {
   // recorriendo rápido no se bajan ni decodifican imágenes ni se traducen textos de más.
   clearTimeout(spotlightTimer);
   spotlightTimer = window.setTimeout(() => {
-    void swapHeroImage(item.backdrop || item.poster);
+    void swapHeroImage(large(item.backdrop) || item.poster);
     void spanishOverview(item, key);
   }, 220);
 }
@@ -413,11 +437,11 @@ function spotlightFor(node: HTMLElement): void {
   const item = cardItems.get(node);
   if (item) showSpotlight(item, true);
   else if (catalogHero && node.classList.contains('genre-tile')) showSpotlight(catalogHero, true);
-  else if (catalogHero && (node === heroPlay || node === heroInfo || node.closest('#topbar'))) showSpotlight(catalogHero, false);
+  else if (catalogHero && (node === heroPlay || node === heroInfo)) showSpotlight(catalogHero, false);
 }
 
-function setStatus(text: string): void {
-  statusEl.textContent = text;
+function setStatus(text: string, loading = false): void {
+  showStatus(statusEl, text, loading);
 }
 
 function toast(text: string): void {
@@ -664,27 +688,91 @@ function renderHome(): void {
   setStatus(uniqueCount ? `${uniqueCount} títulos · Audio o subtítulos en español` : 'No hay títulos para mostrar.');
   resetRows();
   rebuildNav();
-  // Elegida desde el menú: el foco se queda en el menú (se ve el cambio y se baja cuando se quiere).
-  if (!menu.contains(document.activeElement)) focusInitial();
-  else revealRow(document.activeElement as HTMLElement);
+  if (!rail.contains(document.activeElement)) focusInitial();
 }
 
 // ---------- Secciones del menú (Películas, Series, Anime, Categorías) ----------
 
-const menuButtons = SECTIONS.map((section) => {
+/** Íconos del menú (trazos de 24×24). */
+const ICONS: Readonly<Record<string, string>> = {
+  buscar: 'M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13M15.5 15.5l5 5',
+  inicio: 'M3.5 10.5 12 4l8.5 6.5V20a1 1 0 0 1-1 1h-5v-6h-5v6h-5a1 1 0 0 1-1-1z',
+  peliculas: 'M4 5h16v14H4zM8 5v14M16 5v14M4 9.5h4M4 14.5h4M16 9.5h4M16 14.5h4',
+  series: 'M3 7.5h18v12H3zM8 3l4 4.5L16 3',
+  anime: 'M12 3.5l2.5 5.4 5.9.7-4.4 4 1.2 5.9L12 16.6l-5.2 2.9 1.2-5.9-4.4-4 5.9-.7z',
+  envivo: 'M12 10.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3M8.2 8.2a5.4 5.4 0 0 0 0 7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6M5.3 5.3a9.5 9.5 0 0 0 0 13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4',
+  categorias: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+  legal: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 11v6M12 7.5v.5',
+};
+
+function railButton(id: string, label: string, action: () => void): HTMLButtonElement {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'menu-item';
-  button.textContent = section.label;
-  button.dataset['section'] = section.id;
-  button.addEventListener('click', () => { void openSection(section.id); });
-  menu.append(button);
+  button.dataset['section'] = id;
+  button.setAttribute('aria-label', label);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', ICONS[id] ?? '');
+  svg.append(path);
+  const text = document.createElement('span');
+  text.className = 'rail-label';
+  text.textContent = label;
+  button.append(svg, text);
+  // Elegir una opción cierra el menú: el foco pasa al contenido (como en las apps de las teles).
+  button.addEventListener('click', () => {
+    if (document.activeElement instanceof HTMLElement && rail.contains(document.activeElement)) document.activeElement.blur();
+    action();
+  });
+  railItems.append(button);
   return button;
-});
+}
+
+const searchButton = railButton('buscar', 'Buscar', () => { openSearch(); });
+const menuButtons = SECTIONS.map((section) => railButton(section.id, section.label, () => { void openSection(section.id); }));
+const legalBtn = railButton('legal', 'Legal - DMCA', () => { openLegal(); });
+legalBtn.id = 'legalBtn';
+legalBtn.classList.add('legal-btn');
+const railButtons = [searchButton, ...menuButtons, legalBtn];
+/** Lo último elegido fuera del menú: al salir del menú hacia la derecha se vuelve ahí. */
+let lastContentFocus: HTMLElement | null = null;
+
+/** Flecha izquierda desde el borde: se abre el menú, parado en la sección actual. */
+function enterRail(): void {
+  const current = searchMode ? searchButton : railButtons.find((button) => button.classList.contains('is-current') && button !== searchButton);
+  focusElement(current ?? menuButtons[0] ?? null);
+}
+
+function leaveRail(): void {
+  const back = lastContentFocus;
+  if (back?.isConnected && back.offsetParent !== null) focusElement(back);
+  else focusInitial();
+}
+
+function handleRailKey(event: KeyboardEvent): void {
+  const index = railButtons.indexOf(document.activeElement as HTMLButtonElement);
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    event.preventDefault();
+    const next = railButtons[index + (event.key === 'ArrowDown' ? 1 : -1)];
+    if (next) focusElement(next);
+    else if (document.activeElement instanceof HTMLElement) bump(document.activeElement, event.key === 'ArrowDown' ? 'down' : 'up');
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault();
+    leaveRail();
+  } else if (event.key === 'ArrowLeft') {
+    event.preventDefault();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    leaveRail();
+  }
+}
 
 function markSection(id: SectionId): void {
   currentSection = id;
-  for (const button of menuButtons) button.classList.toggle('is-current', button.dataset['section'] === id);
+  for (const button of railButtons) button.classList.toggle('is-current', button.dataset['section'] === id);
+  closeSearchPanel();
 }
 
 /** Empieza a armar otra lista: cancela la búsqueda en curso y lo que se estaba cargando. */
@@ -692,7 +780,7 @@ function beginCatalog(section: SectionId): number {
   clearTimeout(searchTimer);
   searchAbort?.abort();
   searchAbort = null;
-  searchForm.classList.remove('is-busy');
+  searchSpinner.hidden = true;
   searchMode = false;
   if (document.activeElement !== search) search.value = '';
   markSection(section);
@@ -709,6 +797,10 @@ async function openSection(id: SectionId): Promise<void> {
   const token = beginCatalog(id);
   rowsEl.replaceChildren();
   resetRows();
+  if (id === 'envivo') {
+    await loadLive(token);
+    return;
+  }
   if (id === 'categorias') {
     renderCategoryTiles();
     if (currentCategory) await loadShelves(categoryShelves(currentCategory), token);
@@ -719,6 +811,7 @@ async function openSection(id: SectionId): Promise<void> {
   if (!shelves.length) {
     rebuildNav();
     setStatus('Para ver Anime hace falta la clave gratuita de TMDB (ver el README: "Más títulos con TMDB").');
+    focusInitial();
     return;
   }
   await loadShelves(shelves, token);
@@ -744,7 +837,7 @@ function renderCategoryTiles(): void {
   });
   appendRow('Categorías', tiles);
   rebuildNav();
-  if (!menu.contains(document.activeElement)) focusElement(tiles.find((tile) => tile.classList.contains('is-current')) ?? null);
+  if (!rail.contains(document.activeElement)) focusElement(tiles.find((tile) => tile.classList.contains('is-current')) ?? null);
 }
 
 /**
@@ -755,7 +848,7 @@ async function loadShelves(shelves: readonly Shelf[], token: number): Promise<vo
   for (const row of rowsEl.querySelectorAll(':scope > .row:not(:has(.genre-tile))')) row.remove();
   placed = new Set();
   appendSkeleton(2);
-  setStatus('Cargando…');
+  setStatus('Cargando…', true);
   busy(1);
   let count = 0;
   try {
@@ -803,6 +896,104 @@ function showSectionHero(item: Contracts.LibraryTitle): void {
   }
 }
 
+// ---------- En vivo (zlive.st) ----------
+
+const LIVE_GROUPS = ['Deportes', 'Fórmula 1', 'Noticias', 'Entretenimiento', 'Infantiles', 'Otros canales'] as const;
+let liveTrigger: HTMLElement | null = null;
+let liveTimer = 0;
+
+/** Los canales: primero los que están en español, después por tema. */
+async function loadLive(token: number): Promise<void> {
+  hero.hidden = true;
+  catalogEl.classList.add('no-hero');
+  catalogHero = null;
+  appendSkeleton(2);
+  setStatus('Buscando canales en vivo…', true);
+  try {
+    const channels = (await api('live')).channels ?? [];
+    if (token !== catalogToken) return;
+    rowsEl.replaceChildren();
+    const groups: [string, readonly Contracts.LibraryChannel[]][] = [
+      ['En español', channels.filter((channel) => channel.spanish)],
+      ...LIVE_GROUPS.map((group): [string, readonly Contracts.LibraryChannel[]] => [group, channels.filter((channel) => !channel.spanish && channel.category === group)]),
+    ];
+    groups.forEach(([name, list], index) => { appendRow(name, list.map(channelCard), index); });
+    setStatus(`${String(channels.length)} canales en vivo (zlive.st) · Atrás sale del canal`);
+    resetRows();
+    rebuildNav();
+    if (!rail.contains(document.activeElement)) focusInitial();
+  } catch (error) {
+    if (token !== catalogToken) return;
+    rowsEl.replaceChildren();
+    setStatus(errorText(error));
+  }
+}
+
+function channelCard(channel: Contracts.LibraryChannel): HTMLButtonElement {
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'card channel-tile';
+  card.setAttribute('aria-label', `${channel.name}, en vivo`);
+  const face = document.createElement('span');
+  face.className = 'poster-wrap';
+  const badge = document.createElement('span');
+  badge.className = 'live-badge';
+  badge.textContent = 'EN VIVO';
+  const name = document.createElement('span');
+  name.textContent = channel.name;
+  const detail = document.createElement('small');
+  detail.textContent = [channel.category, channel.region, channel.quality].filter((part) => part !== '').join(' · ');
+  face.append(badge, name, detail);
+  card.append(face);
+  card.addEventListener('click', () => { openLive(channel); });
+  return card;
+}
+
+/** El canal con el reproductor de zlive, en un marco aislado (sin ventanas nuevas ni salir del Cine). */
+function openLive(channel: Contracts.LibraryChannel): void {
+  liveTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  liveName.textContent = channel.name;
+  livePanel.hidden = false;
+  livePanel.classList.remove('idle');
+  liveLoading.hidden = false;
+  busy(1);
+  let loaded = false;
+  const ready = (): void => {
+    if (loaded) return;
+    loaded = true;
+    busy(-1);
+    liveLoading.hidden = true;
+  };
+  liveFrame.onload = (): void => { window.setTimeout(ready, 1500); };
+  window.setTimeout(ready, 12_000);
+  liveFrame.src = channel.url;
+  clearTimeout(liveTimer);
+  liveTimer = window.setTimeout(() => { livePanel.classList.add('idle'); }, 5000);
+}
+
+function closeLive(): void {
+  if (livePanel.hidden) return;
+  clearTimeout(liveTimer);
+  liveFrame.onload = null;
+  liveFrame.src = 'about:blank';
+  livePanel.hidden = true;
+  if (!liveLoading.hidden) busy(-1);
+  liveLoading.hidden = true;
+  focusElement(liveTrigger?.isConnected ? liveTrigger : null);
+}
+
+/** En el canal sólo cuenta Atrás; cualquier otra tecla vuelve a mostrar el nombre un rato. */
+function handleLiveKey(event: KeyboardEvent): void {
+  event.preventDefault();
+  if (event.key === 'Escape') {
+    closeLive();
+    return;
+  }
+  livePanel.classList.remove('idle');
+  clearTimeout(liveTimer);
+  liveTimer = window.setTimeout(() => { livePanel.classList.add('idle'); }, 4000);
+}
+
 // ---------- Legal ----------
 
 function openLegal(): void {
@@ -814,7 +1005,8 @@ function openLegal(): void {
 function closeLegal(): void {
   if (legalPanel.hidden) return;
   legalPanel.hidden = true;
-  focusElement(legalTrigger?.isConnected ? legalTrigger : legalBtn);
+  focusElement(legalTrigger?.isConnected && !rail.contains(legalTrigger) ? legalTrigger : null);
+  if (!legalTrigger?.isConnected || rail.contains(legalTrigger)) leaveRail();
 }
 
 /**
@@ -838,7 +1030,8 @@ function renderResults(items: readonly Contracts.LibraryTitle[], query: string, 
       : `${items.length} resultados para “${query}” · Se reproduce en español.`);
   resetRows();
   rebuildNav();
-  if (document.activeElement !== search) focusInitial();
+  // Se sigue escribiendo: el foco se queda en el teclado (o en el buscador).
+  if (document.activeElement !== search && !keyboard.contains(document.activeElement)) focusInitial();
 }
 
 /** Mientras carga el catálogo: filas "esqueleto" con brillo de carga, en vez de una pantalla vacía. */
@@ -895,7 +1088,7 @@ async function loadHome(): Promise<void> {
   const token = beginCatalog('inicio');
   if (fromSection) rowsEl.replaceChildren();
   catalogHero = null;
-  setStatus('Cargando catálogo…');
+  setStatus('Cargando catálogo…', true);
   renderSkeleton();
   try {
     const reply = await api('home');
@@ -918,8 +1111,8 @@ async function runSearch(query: string): Promise<void> {
   searchAbort = abort;
   const token = ++catalogToken;
   searchMode = true;
-  setStatus(`Buscando “${query}”…`);
-  searchForm.classList.add('is-busy');
+  setStatus(`Buscando “${query}”…`, true);
+  searchSpinner.hidden = false;
   // Lo que había se atenúa mientras busca (no desaparece de golpe); si no había nada, esqueletos.
   if (rowsEl.children.length > 0) rowsEl.classList.add('is-loading');
   else renderSkeleton();
@@ -932,7 +1125,7 @@ async function runSearch(query: string): Promise<void> {
     rowsEl.classList.remove('is-loading');
     setStatus(errorText(error));
   } finally {
-    if (token === catalogToken) searchForm.classList.remove('is-busy');
+    if (token === catalogToken) searchSpinner.hidden = true;
   }
 }
 
@@ -941,15 +1134,87 @@ function searchWhileTyping(): void {
   clearTimeout(searchTimer);
   const query = search.value.trim();
   if (query.length < 2) {
-    if (!query && searchMode) searchTimer = window.setTimeout(() => { void loadHome(); }, SEARCH_DELAY_MS);
+    if (searchMode) {
+      ++catalogToken;
+      searchAbort?.abort();
+      searchSpinner.hidden = true;
+      rowsEl.replaceChildren();
+      rebuildNav();
+      setStatus(SEARCH_HINT);
+    }
     return;
   }
   searchTimer = window.setTimeout(() => { void runSearch(query); }, SEARCH_DELAY_MS);
 }
 
+const SEARCH_HINT = 'Escribí con el teclado de la pantalla o con el del celular ("Escribir en la TV").';
+
+// ---------- Buscador con teclado en pantalla ----------
+// Como en Netflix o YouTube en la tele: un teclado que se maneja con las flechas. El del celular
+// ("Escribir en la TV") sigue andando: escribe en el mismo buscador.
+
+const KEY_ROWS = ['1234567890', 'qwertyuiop', 'asdfghjklñ', 'zxcvbnm'] as const;
+
+function buildKeyboard(): void {
+  KEY_ROWS.forEach((letters, index) => {
+    const row = document.createElement('div');
+    row.className = 'key-row';
+    const key = (label: string, edit: (text: string) => string, wide = false): void => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `key${wide ? ' wide' : ''}`;
+      button.textContent = label;
+      button.addEventListener('click', () => {
+        search.value = edit(search.value).slice(0, 80);
+        searchWhileTyping();
+      });
+      row.append(button);
+    };
+    for (const letter of letters) key(letter, (text) => text + letter);
+    if (index === KEY_ROWS.length - 1) {
+      key('Espacio', (text) => (text && !text.endsWith(' ') ? `${text} ` : text), true);
+      key('⌫ Borrar', (text) => text.slice(0, -1), true);
+      key('Borrar todo', () => '', true);
+    }
+    keyboard.append(row);
+  });
+}
+buildKeyboard();
+
+/** El buscador: arriba lo escrito y el teclado; abajo, los resultados. */
+function openSearch(): void {
+  if (!player.hidden) stopPlayer();
+  if (!detailPanel.hidden) closeDetails();
+  closeLegal();
+  if (!searchMode) {
+    clearTimeout(searchTimer);
+    searchAbort?.abort();
+    ++catalogToken;
+    searchMode = true;
+    for (const button of railButtons) button.classList.toggle('is-current', button === searchButton);
+    searchPanel.hidden = false;
+    catalogEl.classList.add('searching', 'no-hero');
+    hero.hidden = true;
+    rowsEl.replaceChildren();
+    resetRows();
+    setStatus(search.value.trim().length >= 2 ? '' : SEARCH_HINT);
+    if (search.value.trim().length >= 2) void runSearch(search.value.trim());
+  }
+  rebuildNav();
+  focusElement(keyboard.querySelector<HTMLElement>('.key'));
+}
+
+function closeSearchPanel(): void {
+  searchPanel.hidden = true;
+  catalogEl.classList.remove('searching');
+}
+
 function rebuildNav(): void {
-  navRows = [[brand, ...menuButtons, search, searchGo, legalBtn]];
-  if (!hero.hidden) navRows.push([heroPlay, heroInfo]);
+  navRows = [];
+  if (searchMode) {
+    navRows.push([search]);
+    for (const row of keyboard.querySelectorAll<HTMLElement>('.key-row')) navRows.push([...row.querySelectorAll<HTMLElement>('.key')]);
+  } else if (!hero.hidden && !heroActions.hidden) navRows.push([heroPlay, heroInfo]);
   for (const track of rowsEl.querySelectorAll<HTMLElement>('.track')) {
     const cards = [...track.querySelectorAll<HTMLElement>('.card')];
     if (cards.length) navRows.push(cards);
@@ -958,8 +1223,9 @@ function rebuildNav(): void {
 
 function focusInitial(): void {
   const firstTrack = rowsEl.querySelector<HTMLElement>('.track .card');
-  // En una búsqueda, directo al primer resultado; en el catálogo, al destacado.
-  focusElement(searchMode ? firstTrack ?? search : !hero.hidden ? heroPlay : firstTrack ?? search);
+  // En el buscador, al teclado; en el catálogo, al destacado (o a la primera tarjeta).
+  const firstKey = keyboard.querySelector<HTMLElement>('.key');
+  focusElement(searchMode ? firstKey : !hero.hidden && !heroActions.hidden ? heroPlay : firstTrack ?? firstKey);
 }
 
 function positionIn(rows: readonly HTMLElement[][], node: HTMLElement | null): { row: number; col: number } | null {
@@ -983,6 +1249,8 @@ function moveIn(rows: readonly HTMLElement[][], direction: 'up' | 'down' | 'left
     const row = rows[position.row] ?? [];
     const next = row[position.col + (direction === 'right' ? 1 : -1)];
     if (next) focusElement(next);
+    // Desde el borde izquierdo del catálogo se abre el menú.
+    else if (direction === 'left' && rows === navRows) enterRail();
     // Al final de una fila del catálogo, a la derecha se vuelve al principio (la fila se desliza de vuelta).
     else if (direction === 'right' && active && isCatalogRow(row) && row.length > 1) focusElement(row[0] ?? null);
     else if (active) bump(active, direction);
@@ -1038,6 +1306,25 @@ function bump(node: HTMLElement, direction: 'up' | 'down' | 'left' | 'right'): v
 }
 
 // ---------- Ficha ----------
+
+/** Año, puntaje, tipo, duración o temporadas y géneros, como etiquetas. */
+function renderMeta(item: Contracts.LibraryTitle, genres: readonly string[], runtime: number | null, seasons = 0): void {
+  const chip = (text: string, kind = ''): HTMLElement => {
+    const span = document.createElement('span');
+    span.className = `meta-chip${kind ? ` ${kind}` : ''}`;
+    span.textContent = text;
+    return span;
+  };
+  const chips = [
+    ...(item.rating ? [chip(`★ ${item.rating}`, 'rating')] : []),
+    ...(item.year ? [chip(item.year)] : []),
+    chip(item.type === 'tv' ? 'Serie' : 'Película', 'kind'),
+    ...(runtime && runtime > 0 ? [chip(runtimeText(runtime))] : []),
+    ...(seasons > 0 ? [chip(seasons === 1 ? '1 temporada' : `${String(seasons)} temporadas`)] : []),
+    ...genres.slice(0, 4).map((genre) => chip(genre, 'genre')),
+  ];
+  detailMeta.replaceChildren(...chips);
+}
 
 function renderSeasons(details: Contracts.LibraryDetails): void {
   seasonBar.replaceChildren();
@@ -1176,7 +1463,7 @@ function renderServers(providers: readonly Contracts.LibraryProvider[]): void {
     button.addEventListener('click', () => {
       const item = currentItem;
       if (!item) return;
-      void startPlayback(item, item.type === 'tv' ? currentSeason : 0, item.type === 'tv' ? 1 : 0, '', provider.id);
+      void startPlayback(item, item.type === 'tv' ? currentSeason : 0, item.type === 'tv' ? 1 : 0, '', { provider: provider.id });
     });
     serversEl.append(button);
   }
@@ -1193,11 +1480,11 @@ async function toggleServers(): Promise<void> {
   }
   serversEl.hidden = false;
   serversEl.replaceChildren();
-  detailStatus.textContent = 'Consultando servidores…';
+  showStatus(detailStatus, 'Consultando servidores…', true);
   try {
     const providers = providersCache ?? (await api('providers')).providers ?? [];
     providersCache = providers;
-    detailStatus.textContent = '';
+    showStatus(detailStatus, '');
     renderServers(providers);
     focusElement(serversEl.querySelector('button'));
   } catch (error) {
@@ -1222,11 +1509,12 @@ async function openDetails(
   document.body.classList.add('sheet-open');
   detailKind.textContent = item.type === 'tv' ? 'Serie' : 'Película';
   detailTitle.textContent = item.title;
-  detailMeta.textContent = metaText(item);
+  renderMeta(item, [], null);
+  detailBody.classList.add('is-loading');
   detailLanguage.textContent = 'Se reproducirá con audio o subtítulos en español.';
   detailOverview.textContent = item.overview;
   detailCast.textContent = '';
-  detailStatus.textContent = 'Cargando ficha…';
+  showStatus(detailStatus, 'Cargando ficha…', true);
   detailPlay.disabled = true;
   detailPlay.replaceChildren();
   const icon = document.createElement('span');
@@ -1241,7 +1529,7 @@ async function openDetails(
   relatedEl.hidden = true;
   relatedTrack.replaceChildren();
   detailBody.scrollTop = 0;
-  const image = item.backdrop || item.poster;
+  const image = large(item.backdrop) || item.poster;
   if (image) {
     detailImage.src = image;
     detailImage.hidden = false;
@@ -1257,17 +1545,14 @@ async function openDetails(
     const details = reply.details;
     if (details) {
       currentDetails = details;
-      detailMeta.textContent = metaText(details, details.genres);
+      renderMeta(details, details.genres, details.runtime, details.seasons.filter((season) => season.number > 0).length);
       detailLanguage.textContent = details.originalLanguage === 'es'
         ? 'Audio original en español.'
         : 'Se reproducirá con audio o subtítulos en español.';
       detailOverview.textContent = details.overview || item.overview;
       detailCast.textContent = details.cast.length
-        ? details.cast.map((person) => (person.character ? `${person.name} (${person.character})` : person.name)).join(' · ')
+        ? `Reparto: ${details.cast.slice(0, 6).map((person) => person.name).join(', ')}`
         : '';
-      if (details.runtime && details.runtime > 0) {
-        detailMeta.textContent = `${detailMeta.textContent}  ·  ${runtimeText(details.runtime)}`;
-      }
       const firstSeason = details.seasons.find((season) => season.number > 0)?.number ?? details.seasons[0]?.number ?? 1;
       currentSeason = options.resume?.season ?? firstSeason;
       renderSeasons(details);
@@ -1275,7 +1560,8 @@ async function openDetails(
       if (item.type === 'tv') await loadSeason(currentSeason, token);
     }
     if (token !== detailToken) return;
-    detailStatus.textContent = '';
+    showStatus(detailStatus, '');
+    detailBody.classList.remove('is-loading');
     detailPlay.disabled = false;
     rebuildDetailRows();
     if (!options.autoplay) prefetchSource(item, item.type === 'tv' ? currentSeason : 0, item.type === 'tv' ? (options.resume?.episode ?? 1) : 0);
@@ -1289,7 +1575,8 @@ async function openDetails(
     if (document.activeElement === detailClose) focusElement(detailPlay);
   } catch (error) {
     if (token !== detailToken) return;
-    detailStatus.textContent = errorText(error);
+    showStatus(detailStatus, errorText(error));
+    detailBody.classList.remove('is-loading');
     detailPlay.disabled = false;
     rebuildDetailRows();
     if (document.activeElement === detailClose) focusElement(detailPlay);
@@ -1535,7 +1822,9 @@ function selectSpanishAudio(engine: Hls, source: Contracts.LibrarySource): void 
 
 async function startVideo(source: Contracts.LibrarySource, subtitles: readonly Contracts.LibrarySubtitle[], token: number): Promise<void> {
   releaseVideo();
+  closeMenu();
   currentSubtitles = subtitles;
+  currentSource = source;
   playerStatus.textContent = 'Cargando video…';
   player.classList.remove('idle');
   playerTop.hidden = false;
@@ -1589,9 +1878,19 @@ function sourceLanguage(source: Contracts.LibrarySource): string {
   return spanishAudio ? 'Audio en español' : 'Subtítulos en español';
 }
 
+interface PlayOptions {
+  /** Un servidor elegido a mano. */
+  readonly provider?: string;
+  /** Sólo un servidor con audio en español (no alcanza con subtítulos). */
+  readonly needAudio?: boolean;
+  /** Retomar en este segundo (cambio de servidor a mitad de la película). */
+  readonly resumeFrom?: number;
+}
+
 async function startPlayback(
-  item: Contracts.LibraryTitle, season: number, episode: number, name: string, provider?: string,
+  item: Contracts.LibraryTitle, season: number, episode: number, name: string, options: PlayOptions = {},
 ): Promise<void> {
+  const provider = options.provider;
   const token = ++playToken;
   const fromDetails = !detailPanel.hidden;
   // Si ya había una ficha abierta (o se viene de "siguiente episodio"), Atrás vuelve a ella.
@@ -1599,15 +1898,18 @@ async function startPlayback(
   triedProviders = provider ? [provider] : [];
   playerContext = { item, season, episode, name, next: nextContext(item, season, episode) };
   const key = progressKey(item.type, item.id, season, episode);
-  resumeAt = savedTime(key);
+  resumeAt = options.resumeFrom !== undefined && options.resumeFrom > 5 ? options.resumeFrom : savedTime(key);
+  const previous = currentProvider;
   nextBtn.hidden = !playerContext.next;
   nextBtn.textContent = playerContext.next?.name ? `Siguiente: ${playerContext.next.name}` : 'Siguiente episodio';
   releaseVideo();
+  const searching = options.needAudio ? 'Buscando un servidor con audio en español…'
+    : provider ? 'Conectando con el servidor elegido…' : 'Buscando servidor con audio o subtítulos en español…';
   if (fromDetails) {
-    detailStatus.textContent = 'Buscando servidor con audio o subtítulos en español…';
+    showStatus(detailStatus, searching, true);
     detailPlay.disabled = true;
   } else {
-    playerStatus.textContent = 'Buscando servidor…';
+    playerStatus.textContent = searching;
     retryBtn.hidden = true;
   }
   const params: Record<string, string> = { id: item.id, type: item.type };
@@ -1616,15 +1918,21 @@ async function startPlayback(
     params['episode'] = String(episode);
   }
   if (provider) params['provider'] = provider;
+  if (options.needAudio) {
+    params['need'] = 'audio';
+    if (previous) params['exclude'] = previous;
+  }
   try {
     const reply = provider ? await api('stream', params) : await api('resolve', params);
     if (token !== playToken) return;
     const source = reply.sources?.[0];
     if (!source) throw new Error('Ese servidor no entregó una fuente compatible.');
     if (reply.provider) triedProviders.push(reply.provider);
+    currentProvider = reply.provider ?? provider ?? '';
+    currentSources = reply.sources ?? [];
     if (fromDetails) {
       detailPlay.disabled = false;
-      detailStatus.textContent = '';
+      showStatus(detailStatus, '');
       detailPanel.hidden = true;
       document.body.classList.remove('sheet-open');
     }
@@ -1655,7 +1963,7 @@ async function startPlayback(
       // No se entra al reproductor para mostrar un error: se queda en la ficha.
       player.hidden = true;
       document.body.classList.remove('playing');
-      detailStatus.textContent = errorText(error);
+      showStatus(detailStatus, errorText(error));
       focusElement(detailPlay);
     } else {
       playerStatus.textContent = errorText(error);
@@ -1691,6 +1999,8 @@ async function tryNextServer(token: number): Promise<void> {
     const source = reply.sources?.[0];
     if (!source) throw new Error('No quedan servidores compatibles.');
     if (reply.provider) triedProviders.push(reply.provider);
+    currentProvider = reply.provider ?? '';
+    currentSources = reply.sources ?? [];
     await startVideo(source, reply.subtitles ?? [], token);
   } catch (error) {
     if (token !== playToken) return;
@@ -1706,7 +2016,7 @@ function showControls(): void {
 }
 
 function hideControls(): void {
-  if (video.paused) return;
+  if (video.paused || !playerMenu.hidden) return;
   player.classList.add('idle');
   if (document.activeElement instanceof HTMLElement && playerControls.contains(document.activeElement)) {
     video.focus({ preventScroll: true });
@@ -1731,7 +2041,9 @@ function seek(seconds: number): void {
   flash.textContent = `${seconds > 0 ? '+' : '−'}${String(Math.abs(seconds))} s`;
   player.querySelector('.seek-flash')?.remove();
   player.append(flash);
+  // También por tiempo: si la animación no corre (Windows sin efectos visuales), el aviso quedaba clavado.
   flash.addEventListener('animationend', () => { flash.remove(); });
+  window.setTimeout(() => { flash.remove(); }, 800);
 }
 
 function updateProgress(): void {
@@ -1741,31 +2053,234 @@ function updateProgress(): void {
   timeEl.textContent = `${clock(video.currentTime)} / ${Number.isFinite(duration) && duration > 0 ? clock(duration) : 'En vivo'}`;
 }
 
-function cycleSubtitles(): void {
-  if (!currentSubtitles.length) {
-    toast('Esta fuente no ofrece subtítulos.');
-    return;
-  }
-  subtitleIndex += 1;
-  if (subtitleIndex >= currentSubtitles.length) subtitleIndex = -1;
-  applySubtitleMode();
-  const subtitle = subtitleIndex >= 0 ? currentSubtitles[subtitleIndex] : undefined;
-  toast(subtitleIndex < 0 ? 'Subtítulos desactivados' : `Subtítulos: ${subtitle ? subtitleLabel(subtitle.label) : ''}`);
+// ---------- Opciones del reproductor ----------
+// Subtítulos, audio, calidad y servidor: un panel con la lista (como en Netflix), en vez de ir
+// pasando de a una opción a ciegas.
+
+interface MenuOption {
+  readonly label: string;
+  readonly detail?: string;
+  readonly selected?: boolean;
+  /** Una acción (buscar otro servidor) y no una opción para marcar. */
+  readonly action?: boolean;
+  readonly run: () => void;
 }
 
-function cycleAudio(): void {
-  if (!hls || hls.audioTracks.length < 2) {
-    toast('Esta fuente no tiene otras pistas de audio.');
+let menuTrigger: HTMLElement | null = null;
+
+function openMenu(title: string, options: readonly MenuOption[], note = ''): void {
+  menuTrigger = document.activeElement instanceof HTMLElement && playerControls.contains(document.activeElement) ? document.activeElement : toggle;
+  playerMenuTitle.textContent = title;
+  playerMenuList.replaceChildren();
+  if (note) {
+    const text = document.createElement('p');
+    text.className = 'menu-note';
+    text.textContent = note;
+    playerMenuList.append(text);
+  }
+  for (const option of options) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `menu-option${option.selected ? ' is-selected' : ''}${option.action ? ' action' : ''}`;
+    button.setAttribute('role', option.action ? 'menuitem' : 'menuitemradio');
+    if (!option.action) button.setAttribute('aria-checked', String(option.selected === true));
+    const label = document.createElement('span');
+    label.textContent = option.label;
+    if (option.detail) {
+      const detail = document.createElement('small');
+      detail.textContent = option.detail;
+      label.append(detail);
+    }
+    button.append(label);
+    button.addEventListener('click', () => {
+      closeMenu();
+      option.run();
+    });
+    playerMenuList.append(button);
+  }
+  playerMenu.hidden = false;
+  showControls();
+  clearTimeout(hideTimer);
+  const buttons = [...playerMenuList.querySelectorAll<HTMLElement>('.menu-option')];
+  focusElement(buttons.find((button) => button.classList.contains('is-selected')) ?? buttons[0] ?? null);
+}
+
+function closeMenu(): void {
+  if (playerMenu.hidden) return;
+  playerMenu.hidden = true;
+  if (!player.hidden) {
+    focusElement(menuTrigger?.isConnected ? menuTrigger : toggle);
+    showControls();
+  }
+}
+
+function handleMenuKey(event: KeyboardEvent): void {
+  const buttons = [...playerMenuList.querySelectorAll<HTMLElement>('.menu-option')];
+  const index = buttons.indexOf(document.activeElement as HTMLElement);
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    event.preventDefault();
+    const next = buttons[index + (event.key === 'ArrowDown' ? 1 : -1)];
+    if (next) {
+      focusElement(next);
+      next.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } else if (document.activeElement instanceof HTMLElement) bump(document.activeElement, event.key === 'ArrowDown' ? 'down' : 'up');
+  } else if (event.key === 'Escape' || event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    event.preventDefault();
+    closeMenu();
+  }
+}
+
+const LANGUAGES: Readonly<Record<string, string>> = {
+  en: 'Inglés', ja: 'Japonés', ko: 'Coreano', fr: 'Francés', it: 'Italiano', de: 'Alemán', pt: 'Portugués',
+  zh: 'Chino', ru: 'Ruso', hi: 'Hindi', tr: 'Turco', ar: 'Árabe',
+};
+
+function languageName(code: string, name: string, index: number): string {
+  if (isSpanish(code) || isSpanish(name)) return name && !/^spa|^es$/i.test(name) ? `Español (${name})` : 'Español';
+  return LANGUAGES[code.slice(0, 2).toLowerCase()] ?? (name || `Pista ${String(index + 1)}`);
+}
+
+/** ¿Se está viendo con audio en español? (Si no, va con subtítulos.) */
+function spanishAudioNow(): boolean {
+  if (hls && hls.audioTracks.length > 0) {
+    const track = hls.audioTracks[hls.audioTrack];
+    if (track && (isSpanish(track.lang ?? '') || isSpanish(track.name))) return true;
+  }
+  return currentSource !== null && hasSpanishAudio(currentSource);
+}
+
+function audioServerOption(): MenuOption {
+  return { label: 'Buscar servidor con audio en español', detail: 'Retoma en el mismo minuto', action: true, run: () => { switchServer(undefined, true); } };
+}
+
+function setSubtitle(index: number): void {
+  subtitleIndex = index;
+  applySubtitleMode();
+  const subtitle = currentSubtitles[index];
+  toast(index < 0 ? 'Subtítulos desactivados' : `Subtítulos: ${subtitle ? subtitleLabel(subtitle.label) : ''}`);
+}
+
+function subtitlesMenu(): void {
+  const options: MenuOption[] = [
+    { label: 'Desactivados', selected: subtitleIndex < 0, run: () => { setSubtitle(-1); } },
+    ...currentSubtitles.map((subtitle, index): MenuOption => ({
+      label: subtitleLabel(subtitle.label),
+      detail: latinSubtitle(subtitle) ? 'Latinoamérica' : 'Español',
+      selected: index === subtitleIndex,
+      run: () => { setSubtitle(index); },
+    })),
+  ];
+  if (!currentSubtitles.length) options.push({ label: 'Probar otro servidor', detail: 'Retoma en el mismo minuto', action: true, run: () => { switchServer(); } });
+  openMenu('Subtítulos', options, currentSubtitles.length ? '' : 'Este título no tiene subtítulos en español en esta fuente.');
+}
+
+function latinSubtitle(subtitle: Contracts.LibrarySubtitle): boolean {
+  return /latino|latina|\(la\)|\bla\b/i.test(`${subtitle.label} ${subtitle.url}`);
+}
+
+function audioMenu(): void {
+  const engine = hls;
+  const spanish = spanishAudioNow();
+  const options: MenuOption[] = engine && engine.audioTracks.length > 0
+    ? engine.audioTracks.map((track, index): MenuOption => ({
+      label: languageName(track.lang ?? '', track.name, index),
+      selected: index === engine.audioTrack,
+      run: () => {
+        engine.audioTrack = index;
+        toast(`Audio: ${languageName(track.lang ?? '', track.name, index)}`);
+      },
+    }))
+    : [{ label: spanish ? 'Español' : 'Idioma original', detail: 'La única pista de esta fuente', selected: true, run: () => undefined }];
+  if (!spanish) options.push(audioServerOption());
+  openMenu('Audio', options, spanish ? '' : 'Esta fuente está en el idioma original, con subtítulos en español.');
+}
+
+function qualityMenu(): void {
+  const engine = hls;
+  if (engine && engine.levels.length > 0) {
+    // Una opción por resolución (la de más calidad de cada una), sólo las que la notebook decodifica bien.
+    const byHeight = new Map<number, { readonly index: number; readonly bitrate: number }>();
+    engine.levels.forEach((level, index) => {
+      const height = level.height || 0;
+      if (height > 1080 || (level.videoCodec && !/^avc/i.test(level.videoCodec))) return;
+      const known = byHeight.get(height);
+      if (!known || level.bitrate > known.bitrate) byHeight.set(height, { index, bitrate: level.bitrate });
+    });
+    const levels = [...byHeight].sort((a, b) => b[0] - a[0]);
+    const playing = engine.levels[engine.currentLevel]?.height ?? 0;
+    openMenu('Calidad', [
+      {
+        label: 'Automática', detail: playing ? `Ahora: ${String(playing)}p · según la conexión` : 'Según la conexión',
+        selected: engine.autoLevelEnabled, run: () => { engine.currentLevel = -1; toast('Calidad automática'); },
+      },
+      ...levels.map(([height, level]): MenuOption => ({
+        label: height ? `${String(height)}p${height >= 1080 ? ' (Full HD)' : height >= 720 ? ' (HD)' : ''}` : 'Única',
+        detail: level.bitrate ? `${(level.bitrate / 1_000_000).toFixed(1)} Mbps` : '',
+        selected: !engine.autoLevelEnabled && engine.currentLevel === level.index,
+        run: () => { engine.currentLevel = level.index; toast(`Calidad: ${String(height)}p`); },
+      })),
+    ], levels.length < 2 ? 'Este servidor entrega una sola calidad.' : '');
     return;
   }
-  hls.audioTrack = (hls.audioTrack + 1) % hls.audioTracks.length;
-  const track = hls.audioTracks[hls.audioTrack];
-  const label = track ? (isSpanish(track.lang ?? '') || isSpanish(track.name) ? 'Español' : track.name) : '';
-  toast(`Audio: ${label || `pista ${hls.audioTrack + 1}`}`);
+  const sources = currentSources;
+  if (sources.length > 1) {
+    // Si todas dicen lo mismo ("Auto"), se numeran: son copias en distintos servidores.
+    const same = new Set(sources.map((source) => source.quality)).size === 1;
+    openMenu('Calidad', sources.map((source, index): MenuOption => ({
+      label: same ? `Opción ${String(index + 1)} · ${source.quality}` : source.quality, detail: source.server, selected: source === currentSource,
+      run: () => { switchSource(source); },
+    })));
+    return;
+  }
+  openMenu('Calidad', [{ label: 'Probar otro servidor', detail: 'Retoma en el mismo minuto', action: true, run: () => { switchServer(); } }],
+    `Este servidor entrega una sola calidad (${currentSource?.quality ?? 'automática'}).`);
+}
+
+async function serverMenu(): Promise<void> {
+  playerStatus.textContent = 'Cargando servidores…';
+  let providers: readonly Contracts.LibraryProvider[] = [];
+  try {
+    providers = providersCache ?? (await api('providers')).providers ?? [];
+    providersCache = providers;
+  } catch {
+    // Sin la lista: igual se ofrece probar otro automáticamente.
+  }
+  if (playerStatus.textContent === 'Cargando servidores…') playerStatus.textContent = '';
+  if (player.hidden) return;
+  openMenu('Servidor', [
+    { label: 'Probar otro automáticamente', detail: 'Con audio o subtítulos en español', action: true, run: () => { switchServer(); } },
+    ...(spanishAudioNow() ? [] : [audioServerOption()]),
+    ...providers.map((provider): MenuOption => ({
+      label: provider.name, detail: provider.id === currentProvider ? 'En uso' : provider.tagline,
+      selected: provider.id === currentProvider, run: () => { if (provider.id !== currentProvider) switchServer(provider.id); },
+    })),
+  ]);
+}
+
+/** Otra calidad del mismo servidor (fuentes MP4): retoma en el mismo segundo. */
+function switchSource(source: Contracts.LibrarySource): void {
+  if (source === currentSource) return;
+  resumeAt = video.currentTime;
+  void startVideo(source, currentSubtitles, playToken);
+}
+
+/** Otro servidor (uno elegido, o el siguiente que tenga español): retoma en el mismo minuto. */
+function switchServer(provider?: string, needAudio = false): void {
+  const context = playerContext;
+  if (!context) return;
+  saveCurrentProgress();
+  const at = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+  if (!provider && !needAudio) {
+    if (currentProvider && !triedProviders.includes(currentProvider)) triedProviders.push(currentProvider);
+    void tryNextServer(playToken);
+    return;
+  }
+  void startPlayback(context.item, context.season, context.episode, context.name, { provider, needAudio, resumeFrom: at });
 }
 
 function stopPlayer(): void {
   playToken++;
+  closeMenu();
   saveCurrentProgress();
   releaseVideo();
   player.hidden = true;
@@ -1797,10 +2312,17 @@ function handleCatalogKey(event: KeyboardEvent): void {
     back();
     return;
   }
+  if (rail.contains(document.activeElement)) {
+    handleRailKey(event);
+    return;
+  }
   if (document.activeElement === search) {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       focusInitial();
+    } else if (event.key === 'ArrowLeft' && search.selectionStart === 0) {
+      event.preventDefault();
+      enterRail();
     }
     return;
   }
@@ -1836,6 +2358,10 @@ function handleLegalKey(event: KeyboardEvent): void {
 }
 
 function handlePlayerKey(event: KeyboardEvent): void {
+  if (!playerMenu.hidden) {
+    handleMenuKey(event);
+    return;
+  }
   if (event.key === 'Escape') {
     event.preventDefault();
     stopPlayer();
@@ -1867,7 +2393,7 @@ function handlePlayerKey(event: KeyboardEvent): void {
   }
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     event.preventDefault();
-    const order = [rewind, toggle, forward, subtitlesBtn, subtitleSizeBtn, subtitleHeightBtn, audioBtn];
+    const order = [rewind, toggle, forward, subtitlesBtn, audioBtn, qualityBtn, serverBtn, subtitleSizeBtn, subtitleHeightBtn];
     if (!nextBtn.hidden) order.push(nextBtn);
     const index = order.indexOf(document.activeElement as HTMLButtonElement);
     const next = order[Math.min(Math.max((index < 0 ? 1 : index) + (event.key === 'ArrowRight' ? 1 : -1), 0), order.length - 1)];
@@ -1882,7 +2408,16 @@ function handlePlayerKey(event: KeyboardEvent): void {
 
 function back(): boolean {
   if (!player.hidden) {
-    stopPlayer();
+    if (!playerMenu.hidden) closeMenu();
+    else stopPlayer();
+    return true;
+  }
+  if (!livePanel.hidden) {
+    closeLive();
+    return true;
+  }
+  if (rail.contains(document.activeElement)) {
+    leaveRail();
     return true;
   }
   if (!legalPanel.hidden) {
@@ -1899,7 +2434,8 @@ function back(): boolean {
   }
   // Ya en el catálogo: vuelve al principio de la sección y después a Inicio (el Cine es la única
   // app, no hay a dónde salir).
-  if (document.activeElement !== heroPlay && !hero.hidden) {
+  const first = rowsEl.querySelector('.track .card');
+  if (document.activeElement !== (!hero.hidden && !heroActions.hidden ? heroPlay : first)) {
     focusInitial();
     return true;
   }
@@ -1915,8 +2451,9 @@ function goToStart(): void {
   if (!player.hidden) stopPlayer();
   if (!detailPanel.hidden) closeDetails();
   closeLegal();
+  closeLive();
   // El botón Inicio lleva al destacado aunque el foco estuviera en el menú.
-  if (menu.contains(document.activeElement) && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  if (rail.contains(document.activeElement) && document.activeElement instanceof HTMLElement) document.activeElement.blur();
   if (searchMode || currentSection !== 'inicio') void loadHome();
   else focusInitial();
 }
@@ -1930,6 +2467,7 @@ addEventListener('keydown', (event) => {
     setTimeout(() => { target.classList.remove('pressed'); }, 140);
   }
   if (!player.hidden) handlePlayerKey(event);
+  else if (!livePanel.hidden) handleLiveKey(event);
   else if (!legalPanel.hidden) handleLegalKey(event);
   else if (!detailPanel.hidden) handleDetailsKey(event);
   else handleCatalogKey(event);
@@ -1941,7 +2479,7 @@ searchForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const query = search.value.trim();
   if (query) void runSearch(query);
-  else void loadHome();
+  else focusElement(keyboard.querySelector<HTMLElement>('.key'));
 });
 
 search.addEventListener('keydown', (event) => {
@@ -1996,11 +2534,13 @@ playerBack.addEventListener('click', stopPlayer);
 rewind.addEventListener('click', () => { seek(-10); });
 forward.addEventListener('click', () => { seek(10); });
 toggle.addEventListener('click', togglePlayback);
-subtitlesBtn.addEventListener('click', cycleSubtitles);
+subtitlesBtn.addEventListener('click', subtitlesMenu);
+qualityBtn.addEventListener('click', qualityMenu);
+serverBtn.addEventListener('click', () => { void serverMenu(); });
 subtitleSizeBtn.addEventListener('click', () => { changeSubtitleStyle('size'); });
 subtitleHeightBtn.addEventListener('click', () => { changeSubtitleStyle('height'); });
 applySubtitleStyle();
-audioBtn.addEventListener('click', cycleAudio);
+audioBtn.addEventListener('click', audioMenu);
 nextBtn.addEventListener('click', () => {
   const next = playerContext?.next;
   if (next) void startPlayback(next.item, next.season, next.episode, next.name);
@@ -2093,7 +2633,7 @@ new MutationObserver(() => {
 // Reproductor: el círculo de carga en el centro mientras busca servidor o el video está cargando.
 const playerSpinner = byId<HTMLElement>('playerSpinner');
 new MutationObserver(() => {
-  playerSpinner.hidden = !/Buscando|Cargando|Probando|Conectando/i.test(playerStatus.textContent ?? '');
+  playerSpinner.hidden = !/Buscando|Cargando|Probando|Conectando|Cambiando/i.test(playerStatus.textContent ?? '');
 }).observe(playerStatus, { childList: true, characterData: true, subtree: true });
 
 window.__controlTvBack = (): boolean => back();
@@ -2108,12 +2648,16 @@ window.__controlTvSearch = (query: string): boolean => {
   if (!text) return false;
   if (!player.hidden) stopPlayer();
   closeDetails();
+  closeLive();
   search.value = text;
+  openSearch();
   void runSearch(text);
   return true;
 };
+/** El celular va a escribir ("Escribir en la TV"): se abre el buscador con el campo listo. */
 window.__controlTvPrepareText = (): boolean => {
-  if (!player.hidden || !detailPanel.hidden) return false;
+  if (!player.hidden || !livePanel.hidden) return false;
+  if (!searchMode) openSearch();
   search.focus();
   search.select();
   return true;
@@ -2123,9 +2667,4 @@ window.__controlTvHome = (): boolean => {
   goToStart();
   return true;
 };
-brand.addEventListener('click', (event) => {
-  event.preventDefault();
-  goToStart();
-});
-
 void loadHome();

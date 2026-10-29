@@ -16,8 +16,13 @@ completa **el Cine** (la única app) y se maneja desde la app Android **ControlT
 - No cambiar configuraciones del sistema (resolución, planes de energía, seguridad, red) por cuenta
   propia: dar instrucciones o scripts (`optimizacion/`) para que los corra la persona.
 - Mientras se trabaja, correr el servicio con `CONTROLTV_TEST=1` (no bloquea el mouse ni tapa la pantalla).
-- **Sin inicio, menú ni otras apps** (se sacaron en oct. 2026 por decisión del usuario, igual que
+- **Sin inicio de apps ni otras apps** (se sacaron en oct. 2026 por decisión del usuario, igual que
   Netflix, Disney+, etc.). No reincorporarlos. Es para uso personal (varios teles de la casa).
+- **Animaciones siempre:** esta notebook tiene los efectos visuales de Windows apagados y Edge informa
+  `prefers-reduced-motion: reduce`. NO poner esa media query (apagaba todo: filas sin desliz, spinners
+  quietos, el aviso "+10 s" clavado). Nada visible puede depender sólo de `animationend`.
+- Al probar en la tele real, si `document.visibilityState` es `hidden` (otra ventana tapa a Edge en
+  modo prueba) Edge no anima ni reproduce: esas mediciones no valen.
 
 ## Arquitectura: el Cine es autónomo
 
@@ -94,14 +99,22 @@ Se mide abriendo un Edge aparte con `--remote-debugging-port` y contando cuadros
 `home`, `search`, `details`, `season`, `providers` y `stream`. No se carga la web del proveedor ni se
 ejecuta su JavaScript: sólo se validan los datos y las fuentes.
 
-- **Menú** (`sections.ts`, sólo datos): Inicio (el `home` de FrameX), Películas, Series, Anime,
-  Categorías y Legal (descargo + DMCA, pedido por el usuario). Cada fila es un `op=shelf`: con clave de
+- **Menú lateral** (como Netflix/Disney+/Prime en la tele): íconos a la izquierda; se abre con la
+  flecha izquierda desde el borde del contenido; elegir cierra el menú y pasa el foco al contenido.
+  Buscar, Inicio, Películas, Series, Anime, En vivo, Categorías y Legal - DMCA (`sections.ts`, sólo datos).
+- **Buscar:** teclado en pantalla (filas de `.key`) + el campo `#search`, donde también escribe el
+  celular (`__controlTvPrepareText` abre el buscador). Con TMDB busca en TMDB (`/search/multi`, es-MX).
+- **En vivo** (`live.ts`): `https://zlive.st/embed/manifest.json` (CORS, pensado para insertar). El
+  video de zlive va con tickets y enlaces firmados: NO extraerlo; se usa su reproductor en un iframe
+  con `sandbox` sin `allow-popups` ni `allow-top-navigation`. Sólo URLs `https://zlive.st/embed/<slug>`.
+  Varias señales "auto-…" suelen estar caídas en zlive mismo (medido fuera del Cine), no es el Cine. Cada fila es un `op=shelf`: con clave de
   TMDB (`ui/ajustes.json`, gitignored; `tmdb.ts`, `language=es-MX`) o, sin clave, `/api/discover`
   (FrameX sólo filtra `type`, `genre`, `sort`, `year`; probado: ignora idioma, país y cadena) y
   `/api/trending?type=`. Anime, plataformas y "en español" necesitan TMDB (sin clave se omiten). Los
   ids de TMDB son los mismos de FrameX. Filas de a 3 consultas, guardadas 30 min (SWR).
-- **Destacado compacto:** recorriendo filas se esconden sus botones y entran 3 filas enteras en 720 px
-  (`--rows-top`; alturas fijas del texto; `heroGap()` baja la lista en el destacado/menú). En el catálogo
+- **Destacado:** recorriendo filas se esconden sus botones; se ven la fila elegida (arriba) y la
+  siguiente (`--rows-top: 340px`, tarjetas 232×131; alturas fijas del texto). Imagen grande del
+  destacado y de la ficha en w1280 (`large()`), tarjetas en w780. En el catálogo
   el nombre va chiquito SOBRE la tarjeta (abajo, con degradé): debajo sumaría alto y no entrarían 3 filas.
   Sin brillo que cruza la tarjeta (al usuario no le gustó). El texto cambia en dos tiempos (`is-changing`).
 - **Catálogo:** 8 filas de 20 títulos + destacado. Tarjetas apaisadas con el backdrop `w780` (la misma
@@ -114,7 +127,11 @@ ejecuta su JavaScript: sólo se validan los datos y las fuentes.
   ficha. Si falla, el reproductor pide otro con `exclude`. No fijar ids de servidores en el código.
 - **Sólo español:** una fuente se descarta si anuncia audio no español y no tiene subtítulos en español;
   sin datos de audio, sólo si el título es originalmente español. Si ningún servidor cumple, la ficha lo dice.
-- **Subtítulos:** sólo de `strem.io`, `vdrk.site` y OpenSubtitles, por HTTPS; los SRT se pasan a WebVTT.
+- **Subtítulos:** además de los que trae cada servidor, los del título (`/api/subtitles`, no dependen
+  del servidor; antes casi nunca había). Sólo de `strem.io`, `vdrk.site` y OpenSubtitles, por HTTPS;
+  hasta 8, latinos primero; los SRT se pasan a WebVTT.
+- **Reproductor:** paneles de Subtítulos, Audio, Calidad (niveles HLS ≤1080p AVC, o las fuentes MP4)
+  y Servidor; `need=audio` en `resolve` busca sólo servidores con audio en español.
   Se bajan recién al elegirlos y se le dan al `<video>` desde la memoria (blob). Los dibuja la app
   (pista `hidden` + `cuechange` → `#subtitleBox`, `getCueAsHTML`, nunca innerHTML); tamaño y altura
   desde el reproductor (`localStorage` `cine:subtitles:v1`).

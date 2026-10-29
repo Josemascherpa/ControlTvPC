@@ -1,17 +1,17 @@
 @font-face{font-family:Inter;src:url('fonts/inter.woff2') format('woff2');font-weight:100 900;font-display:swap}
 :root{
-  --bg:#07090c;--text:#f4f6f8;--muted:#9aa7b3;--accent:#7ce8c4;--line:#ffffff14;
+  --bg:#07090c;--text:#f4f6f8;--muted:#9aa7b3;--accent:#7ce8c4;--line:#ffffff14;--live:#ff4d5e;
   --ease:cubic-bezier(.2,.8,.2,1);--lift:cubic-bezier(.3,1.35,.5,1);
-  /* Desliz largo y suave (arranca rápido y frena despacio, como Google TV). Antes no estaba definida y
-     el navegador descartaba las transiciones que la usaban: filas y tarjetas saltaban sin animación. */
+  /* Desliz largo y suave (arranca rápido y frena despacio, como Google TV). */
   --glide:cubic-bezier(.16,1,.3,1);
   /* Foco con un pequeño rebote al llegar. */
   --spring:cubic-bezier(.34,1.42,.64,1);
-  /* Dónde empiezan las filas: justo debajo del texto del destacado. Con eso entran tres filas enteras
-     (la anterior, la elegida y la siguiente) en 720 px de alto. */
-  --rows-top:226px;
+  /* Menú de la izquierda: cerrado (sólo íconos) y abierto (con nombres). El contenido empieza después. */
+  --rail:84px;--rail-open:248px;--gutter:116px;
+  /* Dónde empiezan las filas: se ven enteras la fila elegida y la siguiente (en 720 px de alto). */
+  --rows-top:340px;
   /* Tarjetas apaisadas (16:9, como Google TV). */
-  --card-w:204px;--card-h:115px;--card-gap:24px;
+  --card-w:232px;--card-h:131px;--card-gap:22px;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
@@ -25,156 +25,189 @@ button:focus,input:focus,a:focus{outline:3px solid #fff;outline-offset:3px}
 .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:50%;background:#ffffff1a;font-size:18px;transition:background .15s,transform .2s var(--lift)}
 .icon-btn:hover{background:#ffffff2b}
 .icon-btn:focus{transform:scale(1.1);background:#fff;color:#0b0d10;outline:none}
-.icon-btn:focus svg{stroke:#0b0d10}
-.icon-btn svg{width:20px;height:20px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round}
 .icon-btn.floating{position:fixed;top:24px;left:30px;z-index:5;background:#00000080}
 /* Al apretar OK: la tarjeta o el botón "se hunde" un instante (respuesta inmediata al control). */
 .pressed{transform:scale(.94)!important;transition-duration:.08s!important}
-
-/* ---------- Barra de arriba ---------- */
-#topbar{position:fixed;inset:0 0 auto;height:64px;display:flex;align-items:center;gap:26px;padding:0 40px;z-index:20;background:linear-gradient(180deg,#07090ce6 0%,#07090c99 60%,#07090c00 100%)}
-.brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:700;letter-spacing:.2px;border-radius:10px;padding:4px 8px;margin-left:-8px;transition:background .2s,transform .2s var(--lift)}
-.brand:focus{outline:none;background:#ffffff1f;transform:scale(1.06)}
-.brand-dot{width:9px;height:9px;border-radius:3px;background:var(--accent);box-shadow:0 0 0 4px #7ce8c429}
-.menu{display:flex;align-items:center;gap:4px}
-.menu-item{height:36px;padding:0 15px;border-radius:999px;font-size:14px;font-weight:600;color:#aeb9c3;white-space:nowrap;
-  transition:background .25s ease,color .25s ease,transform .3s var(--spring)}
-.menu-item:hover{background:#ffffff14;color:#fff}
-.menu-item.is-current{color:#fff;background:#ffffff1f;box-shadow:inset 0 -2px 0 var(--accent)}
-.menu-item:focus{outline:none;background:#fff;color:#0b0d10;transform:scale(1.07)}
-#searchForm{display:flex;align-items:center;gap:8px;margin-left:auto}
-#search{width:220px;height:40px;border-radius:999px;border:1px solid #2b3540;background:#10161dcc;padding:0 16px;color:#fff;transition:width .3s var(--ease),border-color .18s,background .18s,box-shadow .18s}
-#search::placeholder{color:#7e8b97}
-#search:focus{width:340px;border-color:#7ce8c4;background:#0b1015;outline:none;box-shadow:0 0 0 4px #7ce8c42e}
-#searchGo{width:40px;height:40px}
-#searchForm.is-busy #searchGo svg{animation:spin .8s linear}
 @keyframes spin{to{transform:rotate(1turn)}}
+
+/* ---------- Menú de la izquierda ---------- */
+/* Cerrado muestra sólo los íconos; con el foco adentro se abre con los nombres sobre un velo oscuro
+   (Netflix, Disney+ y Prime Video en la tele lo hacen así: deja todo el ancho para el contenido). */
+.rail{position:fixed;inset:0 auto 0 0;z-index:25;width:var(--rail);display:flex;flex-direction:column;padding:26px 14px;
+  background:linear-gradient(90deg,#07090cf2 0%,#07090cb3 70%,#07090c00 100%);transition:width .45s var(--glide),background .45s ease}
+.rail:focus-within{width:var(--rail-open);background:#0a0e12f7}
+.rail-scrim{position:fixed;inset:0;z-index:24;background:#000000a6;opacity:0;pointer-events:none;transition:opacity .4s ease}
+.rail:focus-within + .rail-scrim{opacity:1}
+.rail-brand{display:flex;align-items:center;gap:14px;height:40px;padding:0 0 0 18px;margin-bottom:22px;font-size:20px;font-weight:800;white-space:nowrap}
+.brand-dot{flex:0 0 auto;width:11px;height:11px;border-radius:3px;background:var(--accent);box-shadow:0 0 0 5px #7ce8c429}
+.rail-items{display:flex;flex-direction:column;gap:6px;flex:1}
+.rail-label{opacity:0;transform:translate3d(-8px,0,0);transition:opacity .25s ease,transform .4s var(--glide)}
+.rail:focus-within .rail-label{opacity:1;transform:none;transition-delay:.06s}
+.menu-item{position:relative;display:flex;align-items:center;gap:16px;height:46px;padding:0 0 0 17px;border-radius:12px;font-size:15px;font-weight:600;color:#9fabb6;white-space:nowrap;overflow:hidden;
+  transition:background .25s ease,color .25s ease,transform .35s var(--spring)}
+.menu-item svg{flex:0 0 auto;width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.menu-item.is-current{color:#fff}
+.menu-item.is-current::before{content:"";position:absolute;left:3px;top:13px;bottom:13px;width:3px;border-radius:2px;background:var(--accent)}
+.menu-item:hover{background:#ffffff12;color:#fff}
+.menu-item:focus{outline:none;background:#fff;color:#0b0d10;transform:scale(1.04)}
+.menu-item:focus::before{background:#0b0d10}
+.menu-item.legal-btn{margin-top:auto}
+
+/* ---------- Buscador con teclado en pantalla ---------- */
+.search-panel{position:fixed;left:var(--gutter);right:40px;top:30px;z-index:3}
+#searchForm{position:relative;display:flex;align-items:center;max-width:720px;margin-bottom:16px}
+.search-ico{position:absolute;left:18px;width:20px;height:20px;fill:none;stroke:#9fabb6;stroke-width:2;stroke-linecap:round}
+#search{width:100%;height:50px;border-radius:14px;border:1px solid #2b3540;background:#10161dcc;padding:0 52px;font-size:18px;color:#fff;transition:border-color .2s,box-shadow .2s}
+#search::placeholder{color:#7e8b97}
+#search:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 4px #7ce8c42e}
+#searchSpinner{position:absolute;right:18px;color:var(--accent)}
+.keyboard{display:flex;flex-direction:column;gap:6px}
+.key-row{display:flex;gap:6px}
+.key{width:46px;height:38px;border-radius:9px;background:#ffffff12;font-size:15px;font-weight:600;color:#e3e9ee;transition:background .15s,transform .25s var(--spring)}
+.key.wide{width:auto;padding:0 18px;font-size:13px}
+.key:focus{outline:none;background:#fff;color:#0b0d10;transform:scale(1.12)}
+#catalog.searching.no-hero .rows-viewport{top:298px}
 
 /* ---------- Destacado (el título elegido) ---------- */
 #hero{position:fixed;inset:0;overflow:hidden;z-index:1}
-.hero-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 22%;opacity:0;transform:scale(1.035);
-  transition:opacity .8s ease,transform 2.4s var(--glide);will-change:opacity}
+.hero-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 22%;opacity:0;transform:scale(1.04);
+  transition:opacity .9s ease,transform 3s var(--glide);will-change:opacity}
 .hero-image.is-shown{opacity:1;transform:none}
-.hero-shade{position:absolute;inset:0;background:linear-gradient(90deg,#07090cf7 0%,#07090cd1 32%,#07090c55 64%,#07090c00 100%),linear-gradient(0deg,#07090c 4%,#07090ccc 34%,#07090c00 70%)}
-.hero-copy{position:absolute;left:40px;top:74px;width:min(640px,56vw);z-index:2}
+.hero-shade{position:absolute;inset:0;background:linear-gradient(90deg,#07090cfa 0%,#07090cd9 30%,#07090c66 60%,#07090c00 100%),linear-gradient(0deg,#07090c 6%,#07090ccc 36%,#07090c00 70%)}
+.hero-copy{position:absolute;left:var(--gutter);top:44px;width:min(680px,58vw);z-index:2}
 /* Cambio de título: el texto anterior se esfuma y el nuevo entra con un desliz corto (dos tiempos,
    no un salto). Recorriendo rápido, queda esfumado hasta que el control se detiene. */
-.hero-text{transition:opacity .34s ease,transform .5s var(--glide)}
-.hero-copy.is-changing .hero-text{opacity:0;transform:translate3d(-10px,0,0);transition:opacity .13s ease,transform .13s ease}
+.hero-text{transition:opacity .38s ease,transform .55s var(--glide)}
+.hero-copy.is-changing .hero-text{opacity:0;transform:translate3d(-12px,0,0);transition:opacity .13s ease,transform .13s ease}
 .eyebrow{margin:0 0 10px;font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:var(--accent)}
-/* Una sola línea: un título largo no empuja el destacado hasta debajo de la barra de arriba. */
-h1{margin:0 0 8px;font-size:clamp(28px,3vw,38px);line-height:1.12;letter-spacing:-1.1px;font-weight:800;text-shadow:0 2px 24px #0008;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Una sola línea: un título largo no empuja el resto. */
+h1{margin:0 0 8px;font-size:clamp(32px,3.5vw,46px);line-height:1.12;letter-spacing:-1.2px;font-weight:800;text-shadow:0 2px 24px #0008;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
-.meta{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin:0 0 10px;font-size:13.5px;color:#c3cdd6}
-.overview{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:0 0 16px;max-width:58ch;font-size:14.5px;line-height:1.45;color:#d7dee5}
+.meta{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin:0 0 12px;font-size:13.5px;color:#c3cdd6}
+.overview{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin:0 0 18px;max-width:60ch;font-size:15px;line-height:1.5;color:#d7dee5}
 /* Alturas fijas: el lugar de los botones (y de las filas) no depende del largo del texto. */
 #heroEyebrow{height:14px}
 #heroTitle{height:1.15em}
 #heroMeta{height:18px;flex-wrap:nowrap;overflow:hidden}
-#heroOverview{height:2.9em}
+#heroOverview{height:4.5em}
 .actions{display:flex;gap:12px;flex-wrap:wrap;transition:opacity .35s ease,transform .5s var(--glide)}
 /* Mientras se recorren las filas, el destacado muestra la tarjeta elegida y esconde sus botones. */
 .hero-copy.is-preview .actions{opacity:0;transform:translate3d(0,8px,0);pointer-events:none}
-.btn{display:inline-flex;align-items:center;gap:9px;height:46px;padding:0 24px;border-radius:999px;background:#ffffff1f;font-size:14.5px;font-weight:600;transition:background .15s,transform .22s var(--lift),box-shadow .22s}
+.btn{display:inline-flex;align-items:center;gap:9px;height:48px;padding:0 26px;border-radius:999px;background:#ffffff1f;font-size:15px;font-weight:600;transition:background .15s,transform .25s var(--lift),box-shadow .25s}
 .btn:hover{background:#ffffff30}
 .btn.primary{background:#ffffffe6;color:#0b0d10}
 .btn:focus{outline:none;background:#fff;color:#0b0d10;transform:scale(1.07);box-shadow:0 10px 26px #000a}
 .btn .ico{font-size:12px;line-height:1}
 
 /* ---------- Filas ---------- */
-/* Bordes de arriba y abajo esfumados: la fila anterior asoma arriba y la siguiente abajo, sin cortes secos. */
 .rows-viewport{position:fixed;left:0;right:0;bottom:0;top:var(--rows-top);overflow:hidden;z-index:2;
-  -webkit-mask-image:linear-gradient(180deg,#0000 0,#000 14px,#000 calc(100% - 40px),#0000 100%);
-  mask-image:linear-gradient(180deg,#0000 0,#000 14px,#000 calc(100% - 40px),#0000 100%)}
-#catalog.no-hero .rows-viewport{top:76px}
-.rows-scroll{transition:transform .7s var(--glide);will-change:transform;padding-bottom:40vh}
-.rows{margin-top:4px}
-.row{margin:0;opacity:.55;transition:opacity .55s ease;animation:row-in .45s var(--ease) both;animation-delay:calc(var(--i,0) * 55ms)}
+  -webkit-mask-image:linear-gradient(180deg,#0000 0,#000 12px,#000 calc(100% - 64px),#0000 100%);
+  mask-image:linear-gradient(180deg,#0000 0,#000 12px,#000 calc(100% - 64px),#0000 100%)}
+#catalog.no-hero .rows-viewport{top:70px}
+.rows-scroll{transition:transform .75s var(--glide);will-change:transform;padding-bottom:40vh}
+.row{margin:0;opacity:.6;transition:opacity .55s ease;animation:row-in .5s var(--ease) both;animation-delay:calc(var(--i,0) * 60ms)}
 .row.is-active{opacity:1}
 @keyframes row-in{from{opacity:0;transform:translate3d(0,18px,0)}}
-.row h2{padding:0 40px;margin:0;font-size:15px;line-height:20px;font-weight:600;color:#aab6c1;transition:color .3s,transform .45s var(--glide);transform-origin:left}
-.row.is-active h2{color:#fff;transform:translate3d(4px,0,0)}
-/* La fila se desliza entera (transform, en la placa de video): la tarjeta elegida queda en el primer lugar. */
-.track{display:flex;gap:var(--card-gap);padding:12px 40px 14px;transition:transform .65s var(--glide)}
-/* Sólo la fila activa en su propia capa de la placa de video (menos memoria y sin parpadeos). */
+.row h2{padding:0 var(--gutter);margin:0;font-size:16px;line-height:22px;font-weight:600;color:#aab6c1;transition:color .3s,transform .45s var(--glide);transform-origin:left}
+.row.is-active h2{color:#fff}
+/* La fila se desliza entera (transform, en la placa de video): la tarjeta elegida queda en el primer
+   lugar y se ve correr la fila hacia el lado al que se va, como un scroll de verdad. */
+.track{display:flex;gap:var(--card-gap);padding:14px var(--gutter) 16px;transition:transform .7s var(--glide)}
 .row.is-active .track{will-change:transform}
 .card{position:relative;flex:0 0 var(--card-w);width:var(--card-w);text-align:left;border-radius:12px;contain:layout style;
   transition:transform .55s var(--glide),opacity .45s ease}
-/* En la fila elegida, las demás tarjetas bajan un poco el brillo: el foco resalta y el cambio de una a otra se nota suave. */
-.row.is-active .track:focus-within .card:not(:focus){opacity:.72}
+/* En la fila elegida, las demás tarjetas bajan un poco el brillo: el foco resalta. */
+.row.is-active .track:focus-within .card:not(:focus){opacity:.7}
 .poster-wrap{position:relative;display:block;width:var(--card-w);height:var(--card-h);border-radius:12px;box-shadow:0 6px 16px #0006;overflow:hidden;transition:box-shadow .45s ease}
-/* Borde y sombra de la tarjeta elegida: una capa aparte que sólo cambia de opacidad (no se redibuja). */
+/* Borde de la tarjeta elegida: una capa aparte que sólo cambia de opacidad (no se redibuja). */
 .poster-wrap::after{content:"";position:absolute;inset:0;border-radius:12px;box-shadow:inset 0 0 0 3px #fff;z-index:3;
   opacity:0;transform:scale(1.05);transition:opacity .3s ease,transform .45s var(--glide);pointer-events:none}
 .poster{display:block;width:var(--card-w);height:var(--card-h);border-radius:12px;object-fit:cover;object-position:center 25%;background:linear-gradient(150deg,#1b232c,#0e1318)}
-.card .name{display:block;margin-top:10px;font-size:12.5px;line-height:1.25;color:#8f9ca8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .25s,transform .42s var(--glide)}
+.card .name{display:block;margin-top:10px;font-size:12.5px;line-height:1.25;color:#8f9ca8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .25s}
 .card .watch{position:absolute;z-index:3;left:10px;right:10px;bottom:10px;height:4px;border-radius:2px;background:#000000a6;overflow:hidden}
 .card .watch i{display:block;height:100%;background:var(--accent);border-radius:2px;transform-origin:left}
 .card:hover .poster-wrap::after{opacity:.45;transform:none}
 /* La tarjeta elegida: se agranda con un pequeño rebote, se eleva y gana borde y sombra. */
 .card:focus{outline:none;transform:translate3d(0,-4px,0) scale(1.08);z-index:3;transition:transform .5s var(--spring),opacity .3s ease}
 .card:focus .poster-wrap{box-shadow:0 16px 34px #000c}
-/* En el catálogo el nombre va chiquito sobre la tarjeta (abajo, con un degradé): no suma alto y siguen
-   entrando tres filas. Sin imagen, el nombre ya está en el fondo de la tarjeta. */
-.rows .card .name{position:absolute;left:0;right:0;bottom:0;z-index:2;margin:0;padding:22px 12px 9px;border-radius:0 0 12px 12px;
-  font-size:12px;font-weight:600;color:#e9eef2;text-shadow:0 1px 3px #000;background:linear-gradient(0deg,#000000c7,#00000000);pointer-events:none}
+.card:focus .poster-wrap::after{opacity:1;transform:none}
+/* En el catálogo el nombre va chiquito sobre la tarjeta (abajo, con un degradé). */
+.rows .card .name{position:absolute;left:0;right:0;bottom:0;z-index:2;margin:0;padding:24px 12px 9px;border-radius:0 0 12px 12px;
+  font-size:12.5px;font-weight:600;color:#e9eef2;text-shadow:0 1px 3px #000;background:linear-gradient(0deg,#000000c7,#00000000);pointer-events:none}
 .rows .card:focus .name{font-weight:700;color:#fff}
 .rows .card:has(.poster-fallback) .name{display:none}
-/* "Continuar viendo": el nombre arriba de la barrita de progreso. */
 .rows .card:has(.watch) .name{padding-bottom:20px}
-/* Las categorías: tarjetas con el nombre del género. */
-.genre-tile .poster-wrap{display:flex;align-items:flex-end;padding:14px 16px;background:linear-gradient(150deg,#22303d,#0f151b 70%);font-size:19px;font-weight:800;letter-spacing:-.3px;color:#eef3f6}
+/* Categorías y canales en vivo: tarjetas con el nombre. */
+.genre-tile .poster-wrap,.channel-tile .poster-wrap{display:flex;flex-direction:column;justify-content:flex-end;gap:4px;padding:14px 16px;background:linear-gradient(150deg,#22303d,#0f151b 70%);font-size:19px;font-weight:800;letter-spacing:-.3px;color:#eef3f6}
 .genre-tile.is-current .poster-wrap{background:linear-gradient(150deg,#1f6f59,#0f2b24 75%);color:#fff}
-.card:focus .poster-wrap::after{opacity:1;transform:none}
-.card:focus .name{color:#fff;font-weight:600}
-.status{margin:6px 40px;min-height:18px;font-size:13px;color:var(--muted)}
-.hint{margin:10px 40px 0;font-size:11.5px;letter-spacing:.2px;color:#6a7783}
+.channel-tile .poster-wrap{background:linear-gradient(150deg,#3a1f2b,#12090d 72%);font-size:17px;line-height:1.2}
+.channel-tile .live-badge{position:absolute;top:12px;left:14px}
+.channel-tile small{font-size:11.5px;font-weight:600;letter-spacing:.2px;color:#c9a9b3}
+.live-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:5px;background:var(--live);font-size:10.5px;font-weight:800;letter-spacing:1.2px;color:#fff}
+.live-badge::before{content:"";width:6px;height:6px;border-radius:50%;background:#fff;animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.25}}
+.status{margin:6px var(--gutter);min-height:18px;font-size:13px;color:var(--muted)}
+/* Algo cargando: un círculo girando delante del texto (catálogo, ficha, búsqueda, servidores). */
+.status.loading::before{content:"";display:inline-block;width:12px;height:12px;margin-right:9px;vertical-align:-2px;border-radius:50%;border:2px solid #ffffff33;border-top-color:var(--accent);animation:spin .75s linear infinite}
+.hint{margin:10px var(--gutter) 0;font-size:11.5px;letter-spacing:.2px;color:#6a7783}
 
 /* ---------- Ficha ---------- */
 #details{position:fixed;inset:0;z-index:30;background:var(--bg);overflow:hidden}
 #details.is-open{animation:sheet-fade .3s ease both}
-#details.is-open .detail-body{animation:sheet-up .42s var(--ease) both}
-#details.is-open .detail-bg img{animation:bg-in 1.2s var(--ease) both}
+#details.is-open .detail-hero{animation:sheet-up .5s var(--glide) both}
+#details.is-open .detail-bg img{animation:bg-in 1.6s var(--glide) both}
 @keyframes sheet-fade{from{opacity:0}}
 @keyframes sheet-up{from{opacity:0;transform:translate3d(0,26px,0)}}
-@keyframes bg-in{from{transform:scale(1.06)}}
-.detail-bg{position:absolute;inset:0 0 auto;height:52vh}
-.detail-bg img{width:100%;height:100%;object-fit:cover;object-position:center 24%}
-.detail-bg::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,#07090c00 42%,#07090cd9 78%,var(--bg) 99%)}
-.detail-shade{position:absolute;inset:0;background:linear-gradient(0deg,var(--bg) 0%,#07090cf2 26%,#07090c99 44%,#07090c00 72%)}
-.detail-body{position:relative;z-index:2;width:100%;max-width:1080px;height:100%;margin:0 auto;overflow-y:auto;padding:33vh 40px 70px;scrollbar-width:none;scroll-behavior:smooth}
+@keyframes bg-in{from{transform:scale(1.06);opacity:.4}}
+/* La imagen en grande (TMDB w1280: nítida en la tele) ocupa toda la pantalla, esfumada a la izquierda y abajo. */
+.detail-bg{position:absolute;inset:0}
+.detail-bg img{width:100%;height:100%;object-fit:cover;object-position:center 22%}
+.detail-shade{position:absolute;inset:0;background:linear-gradient(90deg,var(--bg) 0%,#07090cf0 28%,#07090c99 52%,#07090c1a 80%),linear-gradient(0deg,var(--bg) 0%,#07090c99 30%,#07090c00 60%)}
+.detail-body{position:relative;z-index:2;width:100%;height:100%;overflow-y:auto;padding:0 64px 70px var(--gutter);scrollbar-width:none;scroll-behavior:smooth}
 .detail-body::-webkit-scrollbar{display:none}
-.detail-body h2{font-size:clamp(30px,3.4vw,44px);font-weight:800;letter-spacing:-.8px}
-.detail-body .overview{-webkit-line-clamp:5;max-width:74ch;font-size:15.5px}
-.detail-body .eyebrow{margin-bottom:6px}
-.cast{margin:0 0 20px;font-size:13px;color:#b3bfc9;max-width:74ch}
-.lang-note{margin:-2px 0 12px;font-size:12px;font-weight:600;letter-spacing:.2px;color:var(--accent)}
+/* El bloque principal ocupa la primera pantalla, abajo a la izquierda; temporadas y episodios, debajo. */
+.detail-hero{display:flex;flex-direction:column;justify-content:flex-end;min-height:100vh;max-width:700px;padding:90px 0 44px}
+.detail-body h2{margin-bottom:12px;font-size:clamp(34px,3.8vw,50px);line-height:1.08;font-weight:800;letter-spacing:-1.2px;text-shadow:0 2px 24px #0009}
+.detail-body .overview{-webkit-line-clamp:5;max-width:66ch;font-size:16px;line-height:1.55;color:#e1e7ec}
+.detail-body .eyebrow{margin-bottom:8px}
+.meta-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 14px}
+.meta-chip{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:7px;background:#ffffff17;font-size:12.5px;font-weight:600;color:#e3e9ee}
+.meta-chip.rating{background:#f5c5182b;color:#ffd75e}
+.meta-chip.kind{background:none;box-shadow:inset 0 0 0 1px #ffffff40}
+.meta-chip.genre{background:#7ce8c41a;color:#bff3df}
+.cast{margin:0 0 22px;font-size:13.5px;line-height:1.5;color:#b3bfc9;max-width:70ch}
 .cast b{color:#fff;font-weight:600}
+.lang-note{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:12.5px;font-weight:600;color:var(--accent)}
+.lang-note::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+/* Ficha cargando: renglones con brillo donde va a ir el reparto. */
+#detailBody.is-loading #detailCast:empty::before{content:"";display:block;width:62%;height:12px;border-radius:6px;
+  background:linear-gradient(90deg,#ffffff0d 0%,#ffffff24 50%,#ffffff0d 100%) 0 0/200% 100%;animation:skeleton 1.2s linear infinite}
+@keyframes skeleton{to{background-position:-200% 0}}
 .seasons{display:flex;gap:8px;overflow-x:auto;padding:8px 4px 14px;scrollbar-width:none;scroll-behavior:smooth}
 .seasons::-webkit-scrollbar{display:none}
-.season{flex:0 0 auto;height:36px;padding:0 16px;border-radius:999px;background:#ffffff14;font-size:12.5px;white-space:nowrap;transition:background .15s,transform .22s var(--lift)}
+.season{flex:0 0 auto;height:38px;padding:0 18px;border-radius:999px;background:#ffffff14;font-size:13px;white-space:nowrap;transition:background .15s,transform .22s var(--lift)}
 .season.is-active{background:#ffffff38;font-weight:700}
 .season:focus{outline:none;background:#fff;color:#0b0d10;transform:scale(1.08)}
-.chips{display:flex;flex-wrap:wrap;gap:8px;margin:4px auto 14px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 14px}
 .server{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:9px 14px;border-radius:10px;background:#ffffff10;text-align:left;transition:background .15s,transform .22s var(--lift)}
 .server:hover{background:#ffffff1e}
 .server b{font-size:12.5px}
 .server span{font-size:10.5px;color:var(--muted)}
 .server:focus{outline:none;background:#fff;color:#0b0d10;transform:scale(1.05)}
 .server:focus span{color:#33404b}
-.episodes{display:flex;flex-direction:column;gap:8px;margin-top:10px}
-.episode{display:grid;grid-template-columns:132px 1fr;gap:16px;align-items:center;width:100%;padding:8px;border-radius:12px;background:#ffffff0a;text-align:left;transition:background .15s,transform .24s var(--ease),box-shadow .24s}
+.episodes{display:flex;flex-direction:column;gap:10px;margin-top:10px;max-width:980px}
+.episode{display:grid;grid-template-columns:200px 1fr;gap:18px;align-items:center;width:100%;padding:10px;border-radius:14px;background:#ffffff0a;text-align:left;transition:background .2s,transform .3s var(--glide),box-shadow .3s}
 .episode:hover{background:#ffffff16}
-.episode img{width:132px;height:74px;border-radius:6px;object-fit:cover;background:#161d25}
+.episode img{width:200px;height:112px;border-radius:9px;object-fit:cover;background:#161d25}
 .episode .ep-body{min-width:0}
-.episode .ep-title{display:block;font-size:13.5px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.episode .ep-overview{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-top:4px;font-size:11.5px;line-height:1.4;color:var(--muted)}
+.episode .ep-title{display:block;font-size:15px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.episode .ep-overview{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-top:6px;font-size:12.5px;line-height:1.45;color:var(--muted)}
 .episode:focus{outline:none;background:#ffffff24;transform:translate3d(8px,0,0);box-shadow:inset 3px 0 0 #fff,0 10px 24px #0008}
-.related{margin-top:26px}
-.related h3{margin:0 0 10px;font-size:15px;font-weight:600;color:#eef2f5}
-.related-track{display:flex;gap:14px;overflow-x:auto;padding:14px 6px 22px;scrollbar-width:none;scroll-behavior:smooth}
+.related{margin-top:30px}
+.related h3{margin:0 0 10px;font-size:16px;font-weight:600;color:#eef2f5}
+.related-track{display:flex;gap:16px;overflow-x:auto;padding:14px 6px 22px;scrollbar-width:none;scroll-behavior:smooth}
 .related-track::-webkit-scrollbar{display:none}
-.related-track{--card-w:200px;--card-h:113px}
+.related-track{--card-w:220px;--card-h:124px}
 
 /* ---------- Legal ---------- */
 #legal{position:fixed;inset:0;z-index:35;display:flex;align-items:center;justify-content:center;background:#07090cf2;animation:sheet-fade .3s ease both}
@@ -183,15 +216,22 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 .legal-body h3{margin:20px 0 6px;font-size:15px;color:#fff}
 .legal-body p{margin:0 0 10px;font-size:15px;line-height:1.55;color:#c9d2da}
 .legal-body .btn{margin-top:22px}
-.legal-btn{margin-left:4px}
+
+/* ---------- Canal en vivo ---------- */
+#live{position:fixed;inset:0;z-index:45;background:#000;animation:sheet-fade .25s ease both}
+#liveFrame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
+.live-top{position:absolute;inset:0 0 auto;z-index:2;display:flex;align-items:center;gap:16px;padding:22px 34px 60px;background:linear-gradient(180deg,#000000d9,#00000000);pointer-events:none;transition:opacity .5s ease}
+.live-top h2{margin:0;font-size:20px}
+.live-top p{margin:4px 0 0;font-size:12px;color:#b9c4ce}
+#live.idle .live-top{opacity:0}
 
 /* ---------- Reproductor ---------- */
 #player{position:fixed;inset:0;z-index:40;background:#000;animation:sheet-fade .25s ease both}
 #video{width:100%;height:100%;object-fit:contain;background:#000}
-.player-top{position:absolute;inset:0 0 auto;display:flex;align-items:center;gap:16px;padding:20px 34px 64px;background:linear-gradient(180deg,#000000e0,#00000000);z-index:3;transition:opacity .25s,transform .3s var(--ease)}
+.player-top{position:absolute;inset:0 0 auto;display:flex;align-items:center;gap:16px;padding:20px 34px 64px;background:linear-gradient(180deg,#000000e0,#00000000);z-index:3;transition:opacity .3s,transform .4s var(--glide)}
 .player-title h2{margin:0;font-size:20px;letter-spacing:-.3px}
-.player-title p{margin:4px 0 0;font-size:11.5px;color:#b9c4ce}
-.player-controls{position:absolute;inset:auto 0 0;padding:70px 34px 24px;background:linear-gradient(0deg,#000000f0,#00000000);z-index:3;transition:opacity .25s,transform .3s var(--ease)}
+.player-title p{margin:4px 0 0;font-size:12px;color:#b9c4ce}
+.player-controls{position:absolute;inset:auto 0 0;padding:70px 34px 24px;background:linear-gradient(0deg,#000000f0,#00000000);z-index:3;transition:opacity .3s,transform .4s var(--glide)}
 #player.idle .player-top{opacity:0;transform:translate3d(0,-12px,0);pointer-events:none}
 #player.idle .player-controls{opacity:0;transform:translate3d(0,14px,0);pointer-events:none}
 /* Subtítulos dibujados por la app (no los de Edge): tamaño y altura configurables desde el reproductor. */
@@ -200,16 +240,15 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 .subtitle-box .cue{max-width:100%;padding:.08em .45em;border-radius:.22em;background:#000000a8;color:#fff;white-space:pre-line;
   text-shadow:0 1px 3px #000;-webkit-box-decoration-break:clone;box-decoration-break:clone}
 .subtitle-box .cue.sample{color:#d6fff1}
-/* Con los controles a la vista, los subtítulos suben para no quedar tapados. */
 #player:not(.idle) .subtitle-box{bottom:max(var(--sub-bottom,22vh),190px)}
 .progress{height:4px;border-radius:2px;background:#ffffff33;overflow:hidden;margin-bottom:16px}
-#progressFill{height:100%;background:#fff;transform-origin:left;transform:scaleX(0)}
+#progressFill{height:100%;background:#fff;transform-origin:left;transform:scaleX(0);transition:transform .25s linear}
 .controls-row{display:flex;align-items:center;gap:9px}
 .round{display:inline-flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:50%;background:#ffffff1c;font-size:12px;font-weight:700;transition:background .15s,transform .22s var(--lift)}
 .round:hover{background:#ffffff2e}
 .round.play{width:54px;height:54px;font-size:17px;background:#ffffffd9;color:#000}
 .round:focus{outline:none;background:#fff;color:#000;transform:scale(1.14)}
-.pill{height:38px;padding:0 16px;border-radius:999px;background:#ffffff14;font-size:12px;transition:background .15s,transform .22s var(--lift)}
+.pill{height:38px;padding:0 15px;border-radius:999px;background:#ffffff14;font-size:12px;white-space:nowrap;transition:background .15s,transform .22s var(--lift)}
 .pill:hover{background:#ffffff26}
 .pill.accent{background:var(--accent);color:#06231b;font-weight:700}
 .pill:focus{outline:none;background:#fff;color:#000;transform:scale(1.08)}
@@ -218,21 +257,35 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 .player-center{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:0 12vw;text-align:center;pointer-events:none}
 .player-center .status{margin:0;font-size:19px;color:#f1f5f8;text-shadow:0 2px 14px #000}
 .player-center .btn{pointer-events:auto}
-/* Avance/retroceso de 10 s: un aviso corto en el centro. */
+/* Opciones del reproductor (subtítulos, audio, calidad, servidor): un panel a la derecha. */
+.player-menu{position:absolute;right:34px;bottom:118px;z-index:5;width:380px;max-height:62vh;overflow-y:auto;padding:14px;border-radius:18px;background:#0d1217f5;
+  box-shadow:0 24px 60px #000d;scrollbar-width:none;animation:sheet-up .3s var(--glide) both}
+.player-menu h3{margin:4px 10px 10px;font-size:11.5px;font-weight:700;letter-spacing:2.4px;text-transform:uppercase;color:var(--accent)}
+.menu-list{display:flex;flex-direction:column;gap:3px}
+.menu-option{display:flex;align-items:center;gap:12px;width:100%;min-height:46px;padding:8px 14px;border-radius:11px;font-size:14.5px;text-align:left;transition:background .15s,transform .2s var(--lift)}
+.menu-option span{flex:1;min-width:0}
+.menu-option small{display:block;margin-top:2px;font-size:11.5px;color:var(--muted)}
+.menu-option.is-selected::after{content:"✓";font-weight:800;color:var(--accent)}
+.menu-option.action{color:var(--accent);font-weight:600}
+.menu-option:focus{outline:none;background:#fff;color:#0b0d10;transform:scale(1.02)}
+.menu-option:focus small{color:#46525d}
+.menu-option:focus::after{color:#0b0d10}
+.menu-note{margin:6px 14px 8px;font-size:12px;line-height:1.45;color:var(--muted)}
+/* Avance/retroceso de 10 s: un aviso corto en el centro (se borra solo también por tiempo). */
 .seek-flash{position:absolute;top:50%;left:50%;z-index:4;padding:14px 22px;border-radius:999px;background:#000000b3;font-size:18px;font-weight:700;
   transform:translate(-50%,-50%);animation:flash .6s var(--ease) both;pointer-events:none}
 @keyframes flash{0%{opacity:0;transform:translate(-50%,-50%) scale(.85)}25%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0}}
 
 /* ---------- Indicadores de carga (todo con transform/opacity: la placa de video los mueve sola) ---------- */
 /* Barra de actividad arriba: aparece mientras haya algo cargando (búsqueda, ficha, fuente de video). */
-#activity{position:fixed;inset:0 0 auto;height:3px;z-index:60;overflow:hidden;opacity:0;transition:opacity .25s ease;pointer-events:none}
+#activity{position:fixed;inset:0 0 auto;height:4px;z-index:60;overflow:hidden;opacity:0;transition:opacity .25s ease;pointer-events:none}
 body.is-busy #activity{opacity:1}
 #activity::after{content:"";position:absolute;inset:0;width:40%;background:linear-gradient(90deg,#7ce8c400,var(--accent),#7ce8c400);
   transform:translate3d(-100%,0,0);animation:activity 1.1s cubic-bezier(.4,0,.2,1) infinite}
 body:not(.is-busy) #activity::after{animation-play-state:paused}
 @keyframes activity{to{transform:translate3d(260%,0,0)}}
 /* Póster cargando: un brillo que pasa; la imagen aparece con un fundido cuando llega. */
-.poster{opacity:0;transition:opacity .4s ease}
+.poster{opacity:0;transition:opacity .45s ease}
 .poster.loaded{opacity:1}
 .shimmer{position:absolute;inset:0;border-radius:10px;overflow:hidden;background:#141b23;pointer-events:none}
 .shimmer::after{content:"";position:absolute;inset:0;background:linear-gradient(105deg,#ffffff00 30%,#ffffff12 50%,#ffffff00 70%);
@@ -245,19 +298,16 @@ body:not(.is-busy) #activity::after{animation-play-state:paused}
 /* Filas "esqueleto" mientras carga el catálogo. */
 .row.skeleton h2 .bar{display:inline-block;width:160px;height:14px;border-radius:7px;background:#ffffff14}
 .row.skeleton .card{pointer-events:none}
-/* Búsqueda en curso: lo anterior se atenúa (no desaparece de golpe) y la lupa gira. */
+/* Búsqueda en curso: lo anterior se atenúa (no desaparece de golpe). */
 .rows{transition:opacity .3s ease}
 .rows.is-loading{opacity:.35}
-#searchForm.is-busy #searchGo svg{animation:spin .8s linear infinite}
-/* Círculo de carga (botón Reproducir, reproductor). */
+/* Círculo de carga (botón Reproducir, reproductor, buscador). */
 .spinner{display:inline-block;width:18px;height:18px;border-radius:50%;border:2.5px solid #ffffff33;border-top-color:currentColor;animation:spin .75s linear infinite}
 .btn.is-loading .ico{display:none}
 .btn .spinner{width:15px;height:15px}
 .player-center .spinner{width:46px;height:46px;border-width:3.5px;color:#fff}
 .player-center .spinner[hidden]{display:none!important}
 /* Episodios cargando. */
-.episode.skeleton{pointer-events:none;height:90px;position:relative;overflow:hidden}
-
-@media (prefers-reduced-motion:reduce){
-  *{transition:none!important;animation:none!important}
-}
+.episode.skeleton{pointer-events:none;height:132px;position:relative;overflow:hidden}
+/* Sin regla de "movimiento reducido": Windows con los efectos visuales apagados (como esta notebook)
+   la activa y apagaba todas las animaciones del Cine. Es una app de tele: anima siempre. */

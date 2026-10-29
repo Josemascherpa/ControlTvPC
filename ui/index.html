@@ -14,22 +14,24 @@
 </head>
 <body>
 <div id="activity" aria-hidden="true"></div>
-<header id="topbar">
-  <a class="brand" id="brand" href="#" aria-label="Volver al principio del catálogo">
-    <span class="brand-dot"></span><span class="brand-name">Cine</span>
-  </a>
-  <!-- Secciones: los botones los arma la app (sections.ts). -->
-  <nav id="menu" class="menu" aria-label="Secciones"></nav>
-  <form id="searchForm" role="search">
-    <input id="search" type="search" placeholder="Buscar películas o series" aria-label="Buscar películas o series" maxlength="80" autocomplete="off" spellcheck="false">
-    <button id="searchGo" class="icon-btn" type="submit" aria-label="Buscar">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
-    </button>
-  </form>
-  <button id="legalBtn" class="menu-item legal-btn" type="button">Legal</button>
-</header>
+<!-- Menú a la izquierda (como Netflix, Disney+ o Prime Video en la tele): sólo íconos; al llegar con la
+     flecha izquierda se abre con los nombres. Los botones los arma la app (sections.ts). -->
+<nav id="rail" class="rail" aria-label="Menú">
+  <div class="rail-brand"><span class="brand-dot"></span><span class="rail-label">Cine</span></div>
+  <div id="railItems" class="rail-items"></div>
+</nav>
+<div class="rail-scrim" aria-hidden="true"></div>
 
 <main id="catalog">
+  <!-- Buscador: lo escrito con el teclado de la pantalla o con el del celular. -->
+  <section id="searchPanel" class="search-panel" hidden>
+    <form id="searchForm" role="search">
+      <svg class="search-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+      <input id="search" type="search" placeholder="Buscar películas o series" aria-label="Buscar películas o series" maxlength="80" autocomplete="off" spellcheck="false">
+      <span id="searchSpinner" class="spinner" hidden aria-hidden="true"></span>
+    </form>
+    <div id="keyboard" class="keyboard" aria-label="Teclado"></div>
+  </section>
   <!-- Arriba: el título elegido (como Google TV). Dos imágenes que se turnan para cambiar con un fundido. -->
   <section id="hero" hidden>
     <img id="heroImage" class="hero-image is-shown" alt="" decoding="async">
@@ -53,7 +55,7 @@
     <div id="rowsScroll" class="rows-scroll">
       <section id="rows" class="rows" aria-label="Catálogo"></section>
       <p id="status" class="status" role="status">Cargando catálogo…</p>
-      <p class="hint">Cineapp no aloja ningún archivo: sólo enlaza a servicios de terceros. Más información en Legal - DMCA (arriba a la derecha).</p>
+      <p class="hint">Cineapp no aloja ningún archivo: sólo enlaza a servicios de terceros. Más información en Legal - DMCA (en el menú de la izquierda).</p>
     </div>
   </div>
 </main>
@@ -63,9 +65,10 @@
   <div class="detail-shade"></div>
   <button id="detailClose" class="icon-btn floating" type="button" aria-label="Volver al catálogo">←</button>
   <div class="detail-body" id="detailBody">
+    <div class="detail-hero">
     <p class="eyebrow" id="detailKind"></p>
     <h2 id="detailTitle"></h2>
-    <p class="meta" id="detailMeta"></p>
+    <div class="meta-chips" id="detailMeta"></div>
     <p class="lang-note" id="detailLanguage"></p>
     <p class="overview" id="detailOverview"></p>
     <p class="cast" id="detailCast"></p>
@@ -74,6 +77,7 @@
       <button id="detailServers" class="btn" type="button">Servidores</button>
     </div>
     <p id="detailStatus" class="status" role="status"></p>
+    </div>
     <div id="servers" class="chips" hidden></div>
     <div id="seasonBar" class="seasons" hidden></div>
     <div id="episodes" class="episodes"></div>
@@ -101,6 +105,17 @@
   </div>
 </section>
 
+<section id="live" hidden aria-label="Canal en vivo">
+  <!-- El reproductor del canal (zlive.st) en un marco aislado: sin ventanas nuevas ni salir del Cine. -->
+  <iframe id="liveFrame" title="Canal en vivo" sandbox="allow-scripts allow-same-origin allow-presentation"
+    allow="autoplay; fullscreen; encrypted-media; picture-in-picture" referrerpolicy="origin" tabindex="-1"></iframe>
+  <div id="liveTop" class="live-top">
+    <span class="live-badge">EN VIVO</span>
+    <div><h2 id="liveName"></h2><p>Atrás para salir · si no arranca, tocá la imagen con el mouse del celular</p></div>
+  </div>
+  <div id="liveLoading" class="player-center"><span class="spinner" aria-hidden="true"></span><p class="status">Conectando con el canal…</p></div>
+</section>
+
 <section id="player" hidden aria-label="Reproductor">
   <video id="video" playsinline preload="none" tabindex="-1"></video>
   <div id="subtitleBox" class="subtitle-box" aria-hidden="true"></div>
@@ -120,9 +135,12 @@
       <button id="subtitleSizeBtn" class="pill" type="button">Tamaño</button>
       <button id="subtitleHeightBtn" class="pill" type="button">Altura</button>
       <button id="audioBtn" class="pill" type="button">Audio</button>
+      <button id="qualityBtn" class="pill" type="button">Calidad</button>
+      <button id="serverBtn" class="pill" type="button">Servidor</button>
       <button id="nextBtn" class="pill accent" type="button" hidden>Siguiente episodio</button>
     </div>
   </div>
+  <div id="playerMenu" class="player-menu" hidden role="menu"><h3 id="playerMenuTitle"></h3><div id="playerMenuList" class="menu-list"></div></div>
   <div id="playerCenter" class="player-center">
     <span id="playerSpinner" class="spinner" hidden aria-hidden="true"></span>
     <p id="playerStatus" class="status" role="status"></p>

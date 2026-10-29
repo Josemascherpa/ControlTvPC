@@ -346,3 +346,55 @@ test('filas del menú: un título en otro alfabeto (anime sin nombre en español
   await library.query(query({ op: 'shelf', type: 'movie', genres: '18' }));
   assert.deepEqual(languages, ['es-MX', 'en-US', 'es-MX']);
 });
+
+test('en vivo: sólo canales de zlive con su reproductor, primero los que están en español, sin rotos', async () => {
+  const library = new FramexLibrary(async (url) => {
+    assert.equal(url, 'https://zlive.st/embed/manifest.json');
+    return Response.json({ channels: [
+      { id: 'auto-espn-deportes', name: 'ESPN Deportes', sport: 'Sports', live: true, url: 'https://zlive.st/embed/auto-espn-deportes' },
+      { id: 'cnn', name: 'CNN', sport: '', live: true, url: 'https://zlive.st/embed/cnn' },
+      { id: 'otro', name: 'Otro sitio', live: true, url: 'https://malo.example/embed/otro' },
+      { id: 'roto', name: 'z[broken]', live: true, url: 'https://zlive.st/embed/roto' },
+      { id: '../x', name: 'Raro', live: true, url: 'https://zlive.st/embed/../x' },
+    ] });
+  });
+  const reply = await library.query(query({ op: 'live' }));
+  assert.deepEqual(reply.channels.map((channel) => [channel.name, channel.category, channel.spanish]),
+    [['ESPN Deportes', 'Deportes', true], ['CNN', 'Noticias', false]]);
+});
+
+test('subtítulos: se suman los del título (FrameX los da aparte), sólo en español y los latinos primero', async () => {
+  const library = new FramexLibrary(async (url) => {
+    const path = new URL(url).pathname;
+    if (path === '/api/subtitles') {
+      return Response.json([
+        { lang: 'en', label: 'Subtitles • English', url: 'https://cache.vdrk.site/v1/vtt/movie/1/English.vtt' },
+        { lang: 'es', label: 'Subtitles • Spanish', url: 'https://cache.vdrk.site/v1/vtt/movie/1/Spanish.vtt' },
+        { lang: 'es', label: 'Subtitles • Spanish (Latino)', url: 'https://cache.vdrk.site/v1/vtt/movie/1/Latino.vtt' },
+        { lang: 'es', label: 'Malo', url: 'https://evil.example/x.vtt' },
+      ]);
+    }
+    if (path === '/api/stream') {
+      return Response.json({ success: true, sources: [{ url: 'https://cdn.example/v.m3u8', type: 'hls', audio: 'en' }], subtitles: [] });
+    }
+    throw new Error(`pedido inesperado: ${path}`);
+  });
+  const reply = await library.query(query({ op: 'stream', id: '1', type: 'movie', provider: 'titan' }));
+  assert.equal(reply.error, undefined, 'Con subtítulos en español la fuente en inglés sirve');
+  assert.deepEqual(reply.subtitles.map((subtitle) => subtitle.label), ['Spanish (Latino)', 'Spanish']);
+});
+
+test('"buscar servidor con audio en español": descarta los que sólo tienen subtítulos', async () => {
+  const library = new FramexLibrary(async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === '/api/providers') {
+      return Response.json({ providers: [{ id: 'titan', name: 'Titan', status: 'available' }, { id: 'giant', name: 'Giant', status: 'available' }] });
+    }
+    if (parsed.pathname === '/api/subtitles') return Response.json([{ lang: 'es', label: 'Spanish', url: 'https://cache.vdrk.site/s.vtt' }]);
+    const provider = parsed.searchParams.get('provider');
+    return Response.json({ success: true, sources: [{ url: `https://cdn.example/${provider}.m3u8`, type: 'hls', audio: provider === 'giant' ? 'es' : 'en' }] });
+  });
+  const reply = await library.query(query({ op: 'resolve', id: '1', type: 'movie', need: 'audio' }));
+  assert.equal(reply.provider, 'giant');
+  assert.equal(reply.sources[0].audio, 'es');
+});

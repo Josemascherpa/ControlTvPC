@@ -42,12 +42,20 @@ notebook ──HDMI──> tele
 | Pausa | Play/pausa del video |
 | Pestaña Mouse | Touchpad: mueve la flecha propia de la tele; tocar = clic; dos dedos = ruedita |
 
-Arriba está el menú: **Inicio, Películas, Series, Anime, Categorías** (Drama, Policiales, Terror…)
-y **Legal** (descargo de responsabilidad y DMCA). Recorriendo las filas, el destacado se achica y se
-ven tres filas enteras: la anterior, la elegida y la siguiente.
+A la izquierda está el menú (como Netflix o Disney+ en la tele: sólo íconos; con la flecha izquierda
+se abre): **Buscar, Inicio, Películas, Series, Anime, En vivo, Categorías** (Drama, Policiales,
+Terror…) y **Legal - DMCA**. Recorriendo las filas se ven la elegida y la siguiente.
 
-En el reproductor, con los controles a la vista: subtítulos, **tamaño y altura de los subtítulos**
-(quedan guardados), audio y siguiente episodio.
+- **Buscar** tiene un teclado en pantalla que se maneja con las flechas; el botón "Escribir en la TV"
+  del celular escribe en el mismo buscador.
+- **En vivo:** canales de TV de [zlive.st](https://zlive.st/api) (primero los que están en español),
+  con su propio reproductor en un marco aislado. Atrás sale del canal. Si un canal dice "Stream
+  unavailable", la señal está caída en zlive: probá su versión "Backup" u otro canal.
+
+En el reproductor, con los controles a la vista (flecha arriba): **Subtítulos, Audio, Calidad y
+Servidor** (cada uno abre un panel con las opciones), **tamaño y altura de los subtítulos** (quedan
+guardados) y siguiente episodio. Si la fuente está en idioma original, Audio y Servidor ofrecen
+"Buscar servidor con audio en español" (retoma en el mismo minuto).
 
 ## Instalar
 
@@ -106,7 +114,8 @@ web/
   cine/main.ts            pantalla: destacado, filas, ficha, buscador, reproductor y subtítulos
   cine/library.ts         API de FrameX: catálogo, búsqueda, servidores en español, subtítulos
   cine/sections.ts        el menú: secciones, categorías y las filas de cada una (sólo datos)
-  cine/tmdb.ts            API oficial de TMDB para las filas (opcional, con la clave de ui/ajustes.json)
+  cine/tmdb.ts            API oficial de TMDB para las filas y la búsqueda (opcional, clave en ui/ajustes.json)
+  cine/live.ts            canales en vivo de zlive.st (su listado público para insertar)
   cine/translator.ts      sinopsis en español (una vez por texto)
   cine/store.ts           lo guardado en el navegador (IndexedDB)
   inject.ts               lo que agrega la notebook: cursor oculto, avisos y barra de volumen

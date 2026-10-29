@@ -72,8 +72,22 @@ declare namespace Contracts {
     readonly label: string;
     readonly lang: string;
   }
+  /** Un canal en vivo (zlive.st): se mira con su reproductor, en un marco aislado. */
+  interface LibraryChannel {
+    readonly id: string;
+    readonly name: string;
+    /** "Deportes", "Infantiles", "Noticias"… (ya en español). */
+    readonly category: string;
+    readonly region: string;
+    readonly quality: string;
+    /** En español (por nombre o país). */
+    readonly spanish: boolean;
+    /** Siempre https://zlive.st/embed/…: no se abre ninguna otra dirección. */
+    readonly url: string;
+  }
   /** Lo que responde /api/library. Sólo viene el campo de la operación pedida. */
   interface LibraryReply {
+    readonly channels?: readonly LibraryChannel[];
     readonly hero?: LibraryHero;
     readonly rows?: readonly { readonly name: string; readonly items: readonly LibraryTitle[] }[];
     readonly items?: readonly LibraryTitle[];

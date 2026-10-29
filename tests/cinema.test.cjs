@@ -127,6 +127,12 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
   assert.equal(await evaluate('document.getElementById("details").hidden'), true);
   assert.equal(await evaluate('document.activeElement.classList.contains("card")'), true, 'Restaura el foco del catálogo');
 
+  // Buscador: el teclado de la pantalla escribe en el mismo campo que el celular.
+  await evaluate('document.querySelector(\'.menu-item[data-section="buscar"]\').click()');
+  assert.equal(await evaluate('document.activeElement.className'), 'key', 'Se abre parado en el teclado');
+  await key('Enter', 13); // "1"
+  assert.equal(await evaluate('document.getElementById("search").value'), '1');
+  await evaluate('[...document.querySelectorAll(".key")].find((k) => k.textContent === "Borrar todo").click()');
   assert.equal(await evaluate('window.__controlTvPrepareText()'), true);
   assert.equal(await evaluate('document.activeElement.id'), 'search');
   await send('Input.insertText', { text: 'prueba' });
@@ -161,11 +167,17 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
   assert.equal(await evaluate('document.getElementById("player").hidden'), true);
 
   assert.equal(await evaluate('window.__controlTvBack()'), true); // cierra la ficha de la serie
-  // Menú: Películas arma sus filas (sin clave de TMDB, con FrameX) y el foco se queda en el menú.
-  await evaluate('[...document.querySelectorAll(".menu-item")].find((b) => b.textContent === "Películas").focus()');
+  // Menú de la izquierda: flecha izquierda desde el borde lo abre; Películas arma sus filas (sin clave
+  // de TMDB, con FrameX) y el foco pasa al contenido.
+  assert.equal(await evaluate('window.__controlTvHome()'), true);
+  assert.equal(await evaluate('document.activeElement.id'), 'heroPlay');
+  await key('ArrowLeft', 37);
+  assert.equal(await evaluate('document.activeElement.dataset.section'), 'inicio', 'El menú se abre en la sección actual');
+  await key('ArrowDown', 40);
+  assert.equal(await evaluate('document.activeElement.dataset.section'), 'peliculas');
   await key('Enter', 13);
   await until('document.querySelectorAll(".row:not(.skeleton)").length > 3');
-  assert.equal(await evaluate('document.activeElement.textContent'), 'Películas');
+  assert.equal(await evaluate('document.getElementById("rail").contains(document.activeElement)'), false, 'Elegir cierra el menú');
   assert.ok(apiCalls.includes('/api/discover') && apiCalls.includes('/api/trending'));
   assert.equal(await evaluate('document.querySelector(".row h2").textContent'), 'Tendencias');
   // Aviso legal: se abre desde el menú y Atrás lo cierra.

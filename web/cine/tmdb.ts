@@ -93,6 +93,19 @@ export function withLatinTitles(
   });
 }
 
+/** Búsqueda de TMDB (películas y series, en español): las personas y demás se descartan. */
+export function tmdbSearch(text: string, page: number): { readonly path: string; readonly query: URLSearchParams } {
+  return { path: '/search/multi', query: new URLSearchParams({ query: text, language: 'es-MX', include_adult: 'false', page: String(page) }) };
+}
+
+export function tmdbSearchResults(raw: unknown): readonly Readonly<Record<string, unknown>>[] {
+  return asArray(asRecord(raw)['results']).flatMap((item) => {
+    const type = asRecord(item)['media_type'];
+    if (type !== 'movie' && type !== 'tv') return [];
+    return tmdbResults({ results: [item] }, type);
+  });
+}
+
 /**
  * Los resultados de TMDB con la forma de los de FrameX (la librería los valida igual, con el mismo
  * código): id, tipo, título, imágenes completas, año, puntaje y sinopsis.

@@ -1,9 +1,9 @@
-// Las secciones del menú (Películas, Series, Anime, Categorías) y las filas de cada una. Son sólo
+// Las secciones del menú (Películas, Series, Anime, En vivo, Categorías) y las filas de cada una. Son sólo
 // datos: cada fila es una consulta al catálogo ("shelf") que la librería resuelve con TMDB (si hay
 // clave) o con el discover de FrameX (sin clave, sólo tipo y género). Los ids son los géneros,
 // cadenas y plataformas de TMDB.
 
-export type SectionId = 'inicio' | 'peliculas' | 'series' | 'anime' | 'categorias';
+export type SectionId = 'inicio' | 'peliculas' | 'series' | 'anime' | 'envivo' | 'categorias';
 
 export interface Shelf {
   readonly name: string;
@@ -32,6 +32,7 @@ export const SECTIONS: readonly Section[] = [
   { id: 'peliculas', label: 'Películas' },
   { id: 'series', label: 'Series' },
   { id: 'anime', label: 'Anime' },
+  { id: 'envivo', label: 'En vivo' },
   { id: 'categorias', label: 'Categorías' },
 ];
 

@@ -1,6 +1,7 @@
 import { asArray, asNullableNumber, asRecord, asString } from '../../shared/json.js';
 import type { KeyValueStore } from './store.js';
-import { isLatin, tmdbResults, tmdbShelf, withLatinTitles, type ShelfQuery, type TmdbAccess } from './tmdb.js';
+import { LIVE_MANIFEST, liveChannels } from './live.js';
+import { isLatin, tmdbResults, tmdbSearch, tmdbSearchResults, tmdbShelf, withLatinTitles, type ShelfQuery, type TmdbAccess } from './tmdb.js';
 import type { Translator } from './translator.js';
 
 /** Espera una traducción como mucho un rato: si tarda, se usa el texto original (no se demora la ficha). */
@@ -25,6 +26,10 @@ const MAX_PENDING = 6;
 const HOME_TTL = 5 * 60_000;
 const DETAIL_TTL = 10 * 60_000;
 const SEARCH_TTL = 2 * 60_000;
+/** El listado de canales en vivo. */
+const LIVE_TTL = 10 * 60_000;
+/** Subtítulos en español de un título o episodio, como mucho (los latinos primero). */
+const MAX_SUBTITLES = 8;
 /** Las filas del menú (Películas, Series, Anime, Categorías) cambian poco: media hora. */
 const SHELF_TTL = 30 * 60_000;
 const PROVIDER_TTL = 60_000;
@@ -208,6 +213,13 @@ function looserQuery(text: string): string | null {
   return words.join(' ');
 }
 
+/** ¿La fuente trae audio en español? (Si no, se ve con subtítulos.) */
+export function hasSpanishAudio(source: Contracts.LibrarySource): boolean {
+  return (source.audio ?? '') !== ''
+    ? isSpanish(source.audio ?? '')
+    : (source.audioTracks ?? []).some((track) => isSpanish(track.lang) || isSpanish(track.label));
+}
+
 function providerIds(value: unknown): string[] {
   return asArray(value).flatMap((item) => (PROVIDER_ID.test(asString(item)) ? [asString(item)] : []));
 }
@@ -303,6 +315,12 @@ export class FramexLibrary {
       return this.stream(plan, plan.provider).catch(() => rejected(NETWORK_ERROR));
     }
     if (op === 'search') return this.inSpanish(await this.search(params), op);
+    if (op === 'live') {
+      return this.cached(LIVE_MANIFEST, LIVE_TTL, async () => {
+        const channels = liveChannels(await this.json(LIVE_MANIFEST, 15_000));
+        return channels.length ? { channels } : rejected('No hay canales en vivo ahora.');
+      });
+    }
     // Las filas de TMDB ya vienen en español; las de FrameX se traducen como el catálogo.
     if (op === 'shelf') return this.tmdb ? this.shelf(params) : this.inSpanish(await this.shelf(params), op);
     if (op === 'translate') {
@@ -389,6 +407,17 @@ export class FramexLibrary {
 
   /** Las dos primeras páginas de resultados (la primera con un reintento si la API no contesta). */
   private async searchPages(text: string): Promise<Contracts.LibraryTitle[]> {
+    const tmdb = this.tmdb;
+    if (tmdb) {
+      // TMDB busca también por el nombre en español ("El padrino", "Anatomía según Grey") y entrega
+      // títulos y sinopsis en español.
+      const tmdbPage = async (number: number): Promise<readonly Readonly<Record<string, unknown>>[]> => {
+        const { path, query } = tmdbSearch(text, number);
+        return tmdbSearchResults(await this.json(tmdb.url(path, query), SEARCH_TIMEOUT, tmdb.headers));
+      };
+      const [first, second] = await Promise.all([tmdbPage(1).catch(() => tmdbPage(1)), tmdbPage(2).catch(() => [])]);
+      return unique([...this.titles(first, 100), ...this.titles(second, 100)], (title) => `${title.type}:${title.id}`);
+    }
     const page = (number: number): Promise<Readonly<Record<string, unknown>>> => this.json(
       `${ORIGIN}/api/search?${new URLSearchParams({ q: text, type: 'multi', page: String(number) }).toString()}`, SEARCH_TIMEOUT,
     ).then(asRecord);
@@ -639,9 +668,9 @@ export class FramexLibrary {
     return { providers };
   }
 
-  private async stream(plan: Planned, provider: string): Promise<Contracts.LibraryReply> {
-    const raw = asRecord(await this.json(`${ORIGIN}${plan.path}?${plan.query.toString()}`));
-    const subtitles = unique(asArray(raw['subtitles']).flatMap((item) => {
+  /** Sólo los subtítulos en español, de hosts permitidos y por HTTPS. */
+  private spanishSubtitles(list: unknown): Contracts.LibrarySubtitle[] {
+    return asArray(list).flatMap((item) => {
       const subtitle = asRecord(item);
       const url = safeUrl(subtitle['url'], ['https:']);
       const host = url ? new URL(url).hostname : '';
@@ -650,7 +679,32 @@ export class FramexLibrary {
       const label = clean(subtitle['label'], 80);
       if (!isSpanish(lang) && !isSpanish(label)) return [];
       return [{ url, label: subtitleLabel(label), lang }];
-    }), (subtitle) => subtitle.url).sort((a, b) => latinRank(a) - latinRank(b));
+    });
+  }
+
+  /**
+   * Los subtítulos del título o episodio (FrameX los da aparte, sin importar el servidor): muchos
+   * servidores no mandan ninguno con el video y por eso casi nunca había subtítulos.
+   */
+  private async titleSubtitles(query: URLSearchParams): Promise<Contracts.LibrarySubtitle[]> {
+    const params = new URLSearchParams({ id: query.get('id') ?? '', type: query.get('type') ?? '' });
+    if (params.get('type') === 'tv') {
+      params.set('season', query.get('season') ?? '1');
+      params.set('episode', query.get('episode') ?? '1');
+    }
+    const url = `${ORIGIN}/api/subtitles?${params.toString()}`;
+    const reply = await this.cached(url, SHELF_TTL, async () => {
+      const raw = await this.json(url, 10_000);
+      return { subtitles: this.spanishSubtitles(Array.isArray(raw) ? raw : asRecord(raw)['subtitles']) };
+    });
+    return [...(reply.subtitles ?? [])];
+  }
+
+  private async stream(plan: Planned, provider: string): Promise<Contracts.LibraryReply> {
+    const extra = this.titleSubtitles(plan.query).catch((): Contracts.LibrarySubtitle[] => []);
+    const raw = asRecord(await this.json(`${ORIGIN}${plan.path}?${plan.query.toString()}`));
+    const subtitles = unique([...this.spanishSubtitles(raw['subtitles']), ...await extra], (subtitle) => subtitle.url)
+      .sort((a, b) => latinRank(a) - latinRank(b)).slice(0, MAX_SUBTITLES);
     // El idioma original sólo hace falta cuando no hay subtítulos en español y la fuente no anuncia
     // sus pistas de audio (se consulta una vez y queda en la caché de la ficha).
     const original = subtitles.length > 0 ? '' : await this.originalLanguage(plan.query.get('id') ?? '', plan.query.get('type') ?? '');
@@ -715,21 +769,23 @@ export class FramexLibrary {
       }
     }
     const exclude = new Set((params.get('exclude') ?? '').split(',').filter((value) => PROVIDER_ID.test(value)));
+    // "audio": sólo sirve un servidor con audio en español (no alcanza con subtítulos).
+    const needAudio = params.get('need') === 'audio';
     const list = await this.cached(`${ORIGIN}/api/providers`, PROVIDER_TTL, async () => {
       return this.providers(asRecord(await this.json(`${ORIGIN}/api/providers`)));
     });
     if (list.error) return list;
     const available = list.providers ?? [];
     if (!available.length) return rejected('No hay servidores disponibles ahora.');
-    const candidates = available.filter((provider) => !exclude.has(provider.id)).slice(0, 5);
+    const candidates = available.filter((provider) => !exclude.has(provider.id)).slice(0, needAudio ? 10 : 5);
     if (!candidates.length) return rejected('No quedan más servidores para probar.');
     // Lo mismo pedido hace poco (o pedido por adelantado al abrir la ficha): al instante.
-    const key = `${this.streamQuery(params, '').toString()}|${[...exclude].sort().join(',')}`;
+    const key = `${this.streamQuery(params, '').toString()}|${[...exclude].sort().join(',')}|${needAudio ? 'audio' : ''}`;
     const hit = this.resolved.get(key);
     if (hit && hit.until > Date.now()) return hit.value;
     let pending = this.resolving.get(key);
     if (!pending) {
-      pending = this.firstWorkingServer(params, candidates, available).finally(() => this.resolving.delete(key));
+      pending = this.firstWorkingServer(params, candidates, available, needAudio).finally(() => this.resolving.delete(key));
       this.resolving.set(key, pending);
     }
     const value = await pending;
@@ -746,6 +802,7 @@ export class FramexLibrary {
    */
   private firstWorkingServer(
     params: URLSearchParams, candidates: readonly Contracts.LibraryProvider[], available: readonly Contracts.LibraryProvider[],
+    needAudio = false,
   ): Promise<Contracts.LibraryReply> {
     return new Promise((done) => {
       let finished = false;
@@ -764,16 +821,18 @@ export class FramexLibrary {
           void this.stream({ path: '/api/stream', query: this.streamQuery(params, provider.id), ttl: 0 }, provider.id)
             .catch((): Contracts.LibraryReply | null => null)
             .then((result) => {
-              if (result && (result.sources?.length ?? 0) > 0) {
+              const sources = (result?.sources ?? []).filter((source) => !needAudio || hasSpanishAudio(source));
+              if (result && sources.length > 0) {
                 const others = available.filter((other) => other.id !== result.provider).map((other) => other.id);
-                finish({ ...result, alternates: unique(others, (value) => value) });
+                finish({ ...result, sources, alternates: unique(others, (value) => value) });
                 return;
               }
               failures.push(result);
               pendingCount--;
               if (pendingCount > 0) return;
               const blockedByLanguage = failures.some((failure) => failure?.error === SPANISH_ONLY_ERROR);
-              finish(rejected(blockedByLanguage ? SPANISH_ONLY_ERROR : 'Ningún servidor entregó una fuente compatible. Probá otro título.'));
+              finish(rejected(needAudio ? 'Ningún otro servidor tiene este título con audio en español.'
+                : blockedByLanguage ? SPANISH_ONLY_ERROR : 'Ningún servidor entregó una fuente compatible. Probá otro título.'));
             });
         }, index * STAGGER_MS));
       });
