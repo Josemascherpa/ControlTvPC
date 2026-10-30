@@ -68,7 +68,7 @@ if (-not $sdk -or -not (Test-Path $sdk)) {
 }
 $localProperties = Join-Path $android 'local.properties'
 if (-not (Test-Path $localProperties)) {
-    "sdk.dir=$($sdk -replace '\\', '\\')" | Set-Content -Path $localProperties -Encoding ASCII
+    "sdk.dir=$($sdk.Replace([char]92, [char]47).Replace(':', '\:'))" | Set-Content -Path $localProperties -Encoding ASCII
 }
 Write-Host "SDK: $sdk"
 
