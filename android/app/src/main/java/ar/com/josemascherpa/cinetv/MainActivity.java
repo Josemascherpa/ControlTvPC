@@ -2,6 +2,10 @@ package ar.com.josemascherpa.cinetv;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.UiModeManager;
+import android.content.Context;
+import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.os.Build;
 import android.window.OnBackInvokedDispatcher;
 import android.content.pm.ApplicationInfo;
@@ -50,6 +54,7 @@ public final class MainActivity extends Activity implements Screen {
     private View powerOff;
     private TextView errorView;
     private TextView errorText;
+    private boolean touchMode;
     private boolean powerOffState;
     private boolean errorState;
     private boolean pageReady;
@@ -62,6 +67,11 @@ public final class MainActivity extends Activity implements Screen {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         app = (CineTvApp) getApplication();
+        UiModeManager modes = (UiModeManager) getSystemService(Context.UI_MODE_SERVICE);
+        boolean television = modes != null && modes.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION;
+        touchMode = !television && getPackageManager().hasSystemFeature("android.hardware.touchscreen");
+        setRequestedOrientation(touchMode ? ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            : ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         hideSystemBars();
         setContentView(buildUi());
@@ -196,6 +206,7 @@ public final class MainActivity extends Activity implements Screen {
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
+        settings.setSupportZoom(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
         // La tele no debe agrandar el texto por la configuración del sistema: rompería el diseño.
@@ -223,7 +234,7 @@ public final class MainActivity extends Activity implements Screen {
         errorState = false;
         pageReady = false;
         errorView.setVisibility(View.GONE);
-        webView.loadUrl("http://127.0.0.1:" + port + "/");
+        webView.loadUrl("http://127.0.0.1:" + port + (touchMode ? "/?touch=1" : "/"));
     }
 
     private void showCine() {
@@ -347,7 +358,7 @@ public final class MainActivity extends Activity implements Screen {
     public void text(String text) {
         runJs("window.__cineTv&&window.__cineTv.text(" + js(text) + ")");
         // En la tele no hace falta el teclado del sistema: el Cine ya tiene el suyo en pantalla.
-        hideKeyboardSoon();
+        if (!touchMode) hideKeyboardSoon();
     }
 
     @Override

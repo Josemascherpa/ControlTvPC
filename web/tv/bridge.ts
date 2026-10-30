@@ -29,6 +29,17 @@
     __cineTv?: Bridge;
   }
 
+  // Sólo el APK configura su viewport: el zoom del navegador de escritorio no cambia.
+  const viewport = document.querySelector('meta[name="viewport"]');
+  viewport?.setAttribute('content', 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no');
+  if (new URLSearchParams(location.search).get('touch') === '1') {
+    document.documentElement.classList.add('touch-ui');
+    const style = document.createElement('link');
+    style.rel = 'stylesheet';
+    style.href = 'touch.css';
+    document.head.append(style);
+  }
+
   const host = window as WindowWithBridge;
   if (host.__cineTv !== undefined) return;
 

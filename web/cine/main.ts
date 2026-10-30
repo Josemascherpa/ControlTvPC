@@ -41,6 +41,16 @@ interface PlayContext {
   readonly next: PlayContext | null;
 }
 
+const touchMode = document.documentElement.classList.contains('touch-ui');
+const touchPosters = touchMode ? new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (entry.isIntersecting) {
+      hydrateCard(entry.target);
+      touchPosters?.unobserve(entry.target);
+    }
+  }
+}, { rootMargin: '250px' }) : null;
+
 const STORE_KEY = 'cine:progress:v1';
 const MAX_HISTORY = 60;
 const HIDE_CONTROLS_MS = 3500;
@@ -280,6 +290,7 @@ function subtitleLabel(value: string): string {
 function focusElement(node: HTMLElement | null): void {
   if (!node) return;
   node.focus({ preventScroll: true });
+  if (touchMode) return;
   revealInTrack(node);
   const row = node.closest('.row, .related, .seasons, .chips, .actions, .rail-items, .key-row, .controls-row, .menu-list, .legal-body');
   if (!rail.contains(node) && catalogEl.contains(node)) lastContentFocus = node;
@@ -657,6 +668,7 @@ function makeCard(item: Contracts.LibraryTitle, progress?: ProgressEntry): HTMLB
   name.textContent = item.title;
   card.append(wrap, name);
   cardItems.set(card, item);
+  touchPosters?.observe(card);
   card.addEventListener('click', () => {
     void openDetails(item, progress ? { autoplay: true, resume: progress } : {});
   });
@@ -1201,7 +1213,7 @@ function openSearch(): void {
     if (search.value.trim().length >= 2) void runSearch(search.value.trim());
   }
   rebuildNav();
-  focusElement(keyboard.querySelector<HTMLElement>('.key'));
+  focusElement(touchMode ? search : keyboard.querySelector<HTMLElement>('.key'));
 }
 
 function closeSearchPanel(): void {
@@ -1213,7 +1225,7 @@ function rebuildNav(): void {
   navRows = [];
   if (searchMode) {
     navRows.push([search]);
-    for (const row of keyboard.querySelectorAll<HTMLElement>('.key-row')) navRows.push([...row.querySelectorAll<HTMLElement>('.key')]);
+    if (!touchMode) for (const row of keyboard.querySelectorAll<HTMLElement>('.key-row')) navRows.push([...row.querySelectorAll<HTMLElement>('.key')]);
   } else if (!hero.hidden && !heroActions.hidden) navRows.push([heroPlay, heroInfo]);
   for (const track of rowsEl.querySelectorAll<HTMLElement>('.track')) {
     const cards = [...track.querySelectorAll<HTMLElement>('.card')];
@@ -1225,7 +1237,7 @@ function focusInitial(): void {
   const firstTrack = rowsEl.querySelector<HTMLElement>('.track .card');
   // En el buscador, al teclado; en el catálogo, al destacado (o a la primera tarjeta).
   const firstKey = keyboard.querySelector<HTMLElement>('.key');
-  focusElement(searchMode ? firstKey : !hero.hidden && !heroActions.hidden ? heroPlay : firstTrack ?? firstKey);
+  focusElement(searchMode ? (touchMode ? search : firstKey) : !hero.hidden && !heroActions.hidden ? heroPlay : firstTrack ?? firstKey);
 }
 
 function positionIn(rows: readonly HTMLElement[][], node: HTMLElement | null): { row: number; col: number } | null {
@@ -2496,6 +2508,7 @@ search.addEventListener('input', searchWhileTyping);
 let wheelPending = 0;
 let wheelSideways = 0;
 rowsViewport.addEventListener('wheel', (event) => {
+  if (touchMode) return;
   event.preventDefault();
   // Hacia los costados: recorre la fila (las filas se deslizan solas, no tienen barra propia).
   if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
@@ -2547,6 +2560,7 @@ nextBtn.addEventListener('click', () => {
 });
 retryBtn.addEventListener('click', () => { void tryNextServer(playToken); });
 
+player.addEventListener('pointerdown', () => { showControls(); }, { passive: true });
 player.addEventListener('pointermove', () => {
   const now = performance.now();
   if (now - lastPointerShow < 200) return;

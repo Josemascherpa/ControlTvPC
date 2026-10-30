@@ -45,7 +45,11 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
     const file = normalize(join(ui, url.pathname === '/' ? 'index.html' : url.pathname.slice(1)));
     if (!file.startsWith(ui) || !existsSync(file)) { res.statusCode = 404; res.end(); return; }
     res.setHeader('Content-Type', MIME[extname(file)] ?? 'application/octet-stream');
-    res.end(readFileSync(file));
+    let content = readFileSync(file);
+    if (url.pathname === '/' && url.searchParams.get('touch') === '1') {
+      content = Buffer.from(content.toString().replace('</head>', '<script src="js/web/tv/bridge.js"></script></head>'));
+    }
+    res.end(content);
   });
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   t.after(() => { server.closeAllConnections(); server.close(); });
@@ -194,4 +198,55 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
   await send('Page.navigate', { url: `${origin}/` });
   await until('document.querySelectorAll(".card").length===2');
   console.log('Cine autónomo: catálogo, ficha, serie y reproducción local. Cuadros:', frames, '· pedidos a la API al recargar:', apiCalls.length);
+  // El APK en un teléfono: gestos reales, orientación y controles que no se comprimen.
+  const tap = async (selector) => {
+    const point = await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+    await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+    await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true });
+  await send('Page.navigate', { url: `${origin}/?touch=1` });
+  await until('document.querySelectorAll(".card").length===2 && document.activeElement.id==="heroPlay"');
+  await until('getComputedStyle(document.querySelector(".rail")).height==="64px"');
+  assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'), true, 'No desborda la pantalla del teléfono');
+  assert.equal(await evaluate('getComputedStyle(document.getElementById("catalog")).overflowY'), 'auto', 'El catálogo permite scroll táctil');
+  await tap('#heroInfo');
+  await until('!document.getElementById("details").hidden && !document.getElementById("detailPlay").disabled');
+  await delay(600);
+  await tap('#detailPlay');
+  await until('!document.getElementById("player").hidden && document.getElementById("video").currentTime>0');
+  for (const [width,height] of [[390,844],[844,390],[1280,720],[1920,1080]]) {
+    await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
+    await evaluate('document.getElementById("player").classList.remove("idle")');
+    const layout = await evaluate(`(()=>{const ids=['rewind','toggle','forward','subtitlesBtn','subtitleSizeBtn','subtitleHeightBtn','audioBtn','qualityBtn','serverBtn'];return ids.map(id=>{const r=document.getElementById(id).getBoundingClientRect();return {id,x:r.x,y:r.y,w:r.width,h:r.height}})})()`);
+    for (const box of layout) {
+      assert.ok(box.x >= 0 && box.x + box.w <= width + 1 && box.y >= 0 && box.y + box.h <= height + 1, `${box.id} dentro de ${width}x${height}`);
+      if (['rewind','toggle','forward'].includes(box.id)) assert.ok(Math.abs(box.w-box.h)<1, `${box.id} circular a ${width}px`);
+    }
+    await delay(450); // Espera a que termine la entrada del reproductor antes de revisar la imagen.
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    require('node:fs').writeFileSync(join(root,'work',`touch-player-${width}.png`), Buffer.from(shot.data,'base64'));
+  }
+  await evaluate('window.__controlTvHome()');
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await tap('.menu-item[data-section="buscar"]');
+  await until('!document.getElementById("searchPanel").hidden');
+  assert.equal(await evaluate('document.activeElement.id'), 'search', 'En táctil usa el teclado del teléfono');
+  assert.equal(await evaluate('getComputedStyle(document.getElementById("keyboard")).display'), 'none');
+  await send('Input.insertText', { text: 'tactil' });
+  await until('document.querySelector(".card .name")?.textContent==="Resultado de búsqueda"');
+  await evaluate('document.activeElement.blur(); window.__controlTvHome()');
+  await tap('.menu-item[data-section="peliculas"]');
+  await until('document.querySelectorAll(".row:not(.skeleton)").length>3');
+  await delay(500);
+  await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{x:195,y:700}] });
+  for (let y=650;y>=250;y-=50) {
+    await send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{x:195,y}] });
+    await delay(30);
+  }
+  await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await until('document.getElementById("catalog").scrollTop>100');
+  console.log('APK táctil: toques reales, desplazamiento con dedo, búsqueda y reproductor adaptable en 390, 844, 1280 y 1920 px.');
+
 });
