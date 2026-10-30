@@ -2,18 +2,23 @@
 html.touch-ui, .touch-ui body {height:100%;overscroll-behavior:none;touch-action:pan-x pan-y}
 .touch-ui {--gutter:20px;--card-w:clamp(156px,42vw,240px);--card-h:calc(var(--card-w)*.5625);--card-gap:12px}
 .touch-ui button,.touch-ui a {touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-.touch-ui .rail {inset:0 0 auto;width:100%;height:64px;padding:8px 12px;flex-direction:row;align-items:center;gap:12px;background:#0a0e12f7}
-.touch-ui .rail:focus-within {width:100%}
-.touch-ui .rail-brand {display:none}
-.touch-ui .rail-items {flex-direction:row;overflow-x:auto;gap:6px;scrollbar-width:none;min-width:0}
-.touch-ui .menu-item {flex:0 0 auto;gap:7px;padding:0 12px;height:44px;font-size:12px}
-.touch-ui .menu-item svg {width:18px;height:18px}
+.touch-ui .touch-header {position:fixed;inset:0 0 auto;height:60px;display:flex;align-items:center;gap:12px;padding:8px 16px;background:#0a0e12f5;z-index:20;font-weight:800;font-size:20px}
+.touch-ui .drawer-toggle {width:40px;height:40px;font-size:21px}
+.touch-ui.overlay-open .touch-header {display:none}
+.touch-ui .rail,.touch-ui .rail:focus-within {inset:0 auto 0 0;width:min(288px,85vw);height:100%;padding:24px 16px;flex-direction:column;align-items:stretch;background:#0c1118;z-index:80;transform:translateX(-100%);visibility:hidden;transition:transform .28s var(--ease),visibility 0s .28s;box-shadow:12px 0 40px #0008}
+.touch-ui.drawer-open .rail {transform:none;visibility:visible;transition:transform .28s var(--ease)}
+.touch-ui .drawer-close {position:absolute;right:16px;top:18px;font-size:26px}
+.touch-ui .rail-brand {display:flex;padding-left:12px;margin:0 48px 24px 0;height:40px}
+.touch-ui .rail-items {flex-direction:column;overflow-y:auto;gap:6px;scrollbar-width:none;min-height:0}
+.touch-ui .menu-item {flex:0 0 auto;gap:14px;padding:0 14px;min-height:46px;font-size:14px}
+.touch-ui .menu-item svg {width:21px;height:21px}
 .touch-ui .rail-label {opacity:1;transform:none}
-.touch-ui .rail-scrim {display:none}
+.touch-ui .rail-scrim {display:block;z-index:70;background:#0009;backdrop-filter:blur(3px)}
+.touch-ui.drawer-open .rail-scrim {opacity:1;pointer-events:auto}
 .touch-ui .menu-item:focus {transform:none}
 .touch-ui .menu-item.is-current {background:#7ce8c41a;color:var(--accent)}
 .touch-ui .menu-item.is-current::before {display:none}
-.touch-ui #catalog {position:fixed;inset:64px 0 0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
+.touch-ui #catalog {position:fixed;inset:60px 0 0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
 .touch-ui #hero {position:relative;min-height:350px;inset:auto;display:flex;align-items:flex-end}
 .touch-ui .hero-copy {position:relative;inset:auto;width:100%;padding:100px 20px 24px}
 .touch-ui h1 {white-space:normal;font-size:clamp(26px,5vw,40px);letter-spacing:-.7px}

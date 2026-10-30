@@ -23,7 +23,7 @@ El APK se compila una vez (ver [Compilar](#compilar)) y queda en `CineTV-<versi�
 Para pasarlo al televisor, cualquiera de estas:
 
 - **Por ADB** (lo más rápido si tenés la tele en la misma red con depuración activada):
-  `adb connect <ip-del-tele>:5555` y después `adb install -r CineTV-1.1.apk`.
+  `adb connect <ip-del-tele>:5555` y después `adb install -r CineTV-1.2.apk`.
 - **Por USB:** copiá el APK a un pendrive, lo enchufás en la tele y lo abrís con un explorador
   de archivos (en Android TV/Google TV: *Archivos* o *FX File Explorer*).
 - **En Fire TV / TV boxes:** con la app *Downloader* (o el navegador) bajás el APK desde donde lo
@@ -35,19 +35,21 @@ Después aparece **Cine TV** en la fila de apps del televisor.
 
 ## Teléfonos y tablets
 
-La versión 1.1 detecta el tipo de dispositivo. En televisores mantiene la interfaz para mando y
+La versión 1.2 detecta el tipo de dispositivo. En televisores mantiene la interfaz para mando y
 orientación horizontal; en teléfonos y tablets táctiles respeta la orientación del dispositivo,
 permite deslizar el catálogo y las filas con el dedo y usa el teclado del sistema para buscar.
+El botón de menú abre un drawer a la izquierda. Al reproducir una película, episodio o canal
+se fuerza horizontal; al salir se restaura la orientación normal del dispositivo.
 El APK desactiva el zoom por pellizco. Los controles del reproductor mantienen su forma circular
 y las opciones se distribuyen en varias líneas cuando falta ancho.
 
 ## Descargar desde el televisor con Downloader
 
 Downloader no aloja el archivo: descarga el APK desde una dirección web.
-Para tener un enlace público, podés adjuntar `CineTV-1.1.apk` a una release de este repositorio:
+Para tener un enlace público, podés adjuntar `CineTV-1.2.apk` a una release de este repositorio:
 
 1. En GitHub abrí **Releases → Draft a new release**.
-2. Elegí la rama `android-tv` (debe estar subida), creá una etiqueta como `cinetv-v1.1`
+2. Elegí la rama `android-tv` (debe estar subida), creá una etiqueta como `cinetv-v1.2`
    y adjuntá el APK en la sección de archivos de la release.
 3. Publicá la release y copiá el enlace del archivo adjunto, que termina en `.apk`.
 4. En la TV abrí **Downloader by AFTVnews**, pegá ese enlace y descargá el archivo.
@@ -57,7 +59,7 @@ El repositorio/release debe ser público para descargar sin iniciar sesión. El 
 Downloader es opcional: se obtiene después de tener el enlace público del APK.
 También podés transferir el archivo desde el celular o por USB sin publicarlo.
 
-Esta documentación no implica que la rama o el APK ya estén publicados.
+La release `cinetv-v1.2` incluye el APK firmado para instalación directa.
 
 ## Usar
 

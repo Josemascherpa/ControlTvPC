@@ -206,9 +206,19 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
   };
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await send('Emulation.setTouchEmulationEnabled', { enabled: true });
+  await send('Page.enable', {});
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__orientationCalls=[];window.CineTvDevice={playback(active){window.__orientationCalls.push(active)}}' });
   await send('Page.navigate', { url: `${origin}/?touch=1` });
   await until('document.querySelectorAll(".card").length===2 && document.activeElement.id==="heroPlay"');
-  await until('getComputedStyle(document.querySelector(".rail")).height==="64px"');
+  await until('getComputedStyle(document.querySelector(".touch-header")).height==="60px"');
+  assert.equal(await evaluate('document.getElementById("rail").inert'), true);
+  await tap('.drawer-toggle');
+  await until('document.documentElement.classList.contains("drawer-open")');
+  await delay(350);
+  const drawerShot = await send('Page.captureScreenshot', {format:'png'});
+  require('node:fs').writeFileSync(join(root,'work','touch-drawer.png'),Buffer.from(drawerShot.data,'base64'));
+  assert.equal(await evaluate('window.__cineTv.back()'), true, 'Atrás cierra el drawer');
+  await delay(350);
   assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'), true, 'No desborda la pantalla del teléfono');
   assert.equal(await evaluate('getComputedStyle(document.getElementById("catalog")).overflowY'), 'auto', 'El catálogo permite scroll táctil');
   await tap('#heroInfo');
@@ -216,6 +226,7 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
   await delay(600);
   await tap('#detailPlay');
   await until('!document.getElementById("player").hidden && document.getElementById("video").currentTime>0');
+  assert.equal(await evaluate('window.__orientationCalls.at(-1)'),true,'Reproducir pide orientación horizontal');
   for (const [width,height] of [[390,844],[844,390],[1280,720],[1920,1080]]) {
     await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
     await evaluate('document.getElementById("player").classList.remove("idle")');
@@ -229,14 +240,20 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
     require('node:fs').writeFileSync(join(root,'work',`touch-player-${width}.png`), Buffer.from(shot.data,'base64'));
   }
   await evaluate('window.__controlTvHome()');
+  await until('window.__orientationCalls.at(-1)===false');
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await tap('.drawer-toggle');
+  await delay(350);
   await tap('.menu-item[data-section="buscar"]');
+  assert.equal(await evaluate('document.documentElement.classList.contains("drawer-open")'),false);
   await until('!document.getElementById("searchPanel").hidden');
   assert.equal(await evaluate('document.activeElement.id'), 'search', 'En táctil usa el teclado del teléfono');
   assert.equal(await evaluate('getComputedStyle(document.getElementById("keyboard")).display'), 'none');
   await send('Input.insertText', { text: 'tactil' });
   await until('document.querySelector(".card .name")?.textContent==="Resultado de búsqueda"');
   await evaluate('document.activeElement.blur(); window.__controlTvHome()');
+  await tap('.drawer-toggle');
+  await delay(350);
   await tap('.menu-item[data-section="peliculas"]');
   await until('document.querySelectorAll(".row:not(.skeleton)").length>3');
   await delay(500);

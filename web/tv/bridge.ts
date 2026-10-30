@@ -27,6 +27,7 @@
 
   interface WindowWithBridge extends Window {
     __cineTv?: Bridge;
+    CineTvDevice?: { playback(active: boolean): void };
   }
 
   // Sólo el APK configura su viewport: el zoom del navegador de escritorio no cambia.
@@ -39,6 +40,77 @@
     style.href = 'touch.css';
     document.head.append(style);
   }
+
+  let closeDrawer: (() => boolean) | undefined;
+  document.addEventListener('DOMContentLoaded', () => {
+    const rail = document.getElementById('rail');
+    const catalog = document.getElementById('catalog');
+    const scrim = document.querySelector<HTMLElement>('.rail-scrim');
+    const touch = document.documentElement.classList.contains('touch-ui');
+    let drawerOpen = false;
+    let toggle: HTMLButtonElement | undefined;
+    const setDrawer = (open: boolean, restoreFocus = false): void => {
+      drawerOpen = open;
+      document.documentElement.classList.toggle('drawer-open', open);
+      toggle?.setAttribute('aria-expanded', String(open));
+      if (rail) rail.inert = !open;
+      if (catalog) catalog.inert = open;
+      if (scrim) scrim.hidden = !open;
+      if (restoreFocus) toggle?.focus();
+    };
+    if (touch && rail && scrim) {
+      const header = document.createElement('header');
+      header.className = 'touch-header';
+      toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'drawer-toggle icon-btn';
+      toggle.textContent = '☰';
+      toggle.setAttribute('aria-label', 'Abrir menú');
+      toggle.setAttribute('aria-controls', 'rail');
+      const title = document.createElement('span');
+      title.textContent = 'Cine';
+      header.append(toggle, title);
+      document.body.append(header);
+      const dismiss = document.createElement('button');
+      dismiss.type = 'button';
+      dismiss.className = 'drawer-close icon-btn';
+      dismiss.textContent = '×';
+      dismiss.setAttribute('aria-label', 'Cerrar menú');
+      rail.prepend(dismiss);
+      toggle.addEventListener('click', () => { setDrawer(true); dismiss.focus(); });
+      dismiss.addEventListener('click', () => { setDrawer(false, true); });
+      scrim.addEventListener('click', () => { setDrawer(false, true); });
+      rail.addEventListener('click', (event) => {
+        if (event.target instanceof Element && event.target.closest('.menu-item')) setDrawer(false);
+      }, true);
+      closeDrawer = () => {
+        if (!drawerOpen) return false;
+        setDrawer(false, true);
+        return true;
+      };
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && closeDrawer?.()) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      }, true);
+      setDrawer(false);
+    }
+    let playing: boolean | undefined;
+    const panels = ['player', 'live', 'details', 'legal'].map((id) => document.getElementById(id));
+    const syncPanels = (): void => {
+      const active = panels.slice(0, 2).some((panel) => panel !== null && !panel.hidden);
+      if (playing !== active) {
+        playing = active;
+        (window as WindowWithBridge).CineTvDevice?.playback(active);
+      }
+      document.documentElement.classList.toggle('overlay-open', panels.some((panel) => panel !== null && !panel.hidden));
+      if (active && drawerOpen) setDrawer(false);
+    };
+    const observer = new MutationObserver(syncPanels);
+    for (const panel of panels) if (panel) observer.observe(panel, { attributes: true, attributeFilter: ['hidden'] });
+    syncPanels();
+  });
 
   const host = window as WindowWithBridge;
   if (host.__cineTv !== undefined) return;
@@ -118,6 +190,7 @@
   };
 
   const back = (): boolean | 'escape' => {
+    if (closeDrawer?.()) return true;
     const goBack = window.__controlTvBack;
     return goBack === undefined ? false : goBack();
   };

@@ -21,6 +21,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.ConsoleMessage;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -104,6 +105,7 @@ public final class MainActivity extends Activity implements Screen {
         app.detach(this);
         if (webView != null) {
             webView.loadUrl("about:blank");
+            webView.removeJavascriptInterface("CineTvDevice");
             webView.destroy();
             webView = null;
         }
@@ -218,6 +220,7 @@ public final class MainActivity extends Activity implements Screen {
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         webView.setVerticalScrollBarEnabled(false);
         webView.setHorizontalScrollBarEnabled(false);
+        if (touchMode) webView.addJavascriptInterface(new DeviceBridge(), "CineTvDevice");
         webView.setWebViewClient(new CineClient());
         webView.setWebChromeClient(new CineChrome());
 
@@ -483,6 +486,18 @@ public final class MainActivity extends Activity implements Screen {
     }
 
     // ---------- WebView ----------
+
+    /** Puente limitado a orientación; no expone archivos, intents ni comandos del sistema. */
+    public final class DeviceBridge {
+        @JavascriptInterface
+        public void playback(boolean active) {
+            runOnUiThread(() -> {
+                if (!touchMode || isFinishing() || isDestroyed()) return;
+                setRequestedOrientation(active ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    : ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+            });
+        }
+    }
 
     private final class CineClient extends WebViewClient {
         @Override
