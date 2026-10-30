@@ -14,9 +14,9 @@ const CATEGORIES: Readonly<Record<string, string>> = {
   entertainment: 'Entretenimiento', news: 'Noticias',
 };
 
-/** En español: por el nombre (Deportes, Movistar, LA 1…) o por el país. */
+/** En español: por el nombre (Deportes, Movistar, LA 1, Telefe…) o por el país. */
 function isSpanishChannel(name: string, region: string, flag: string): boolean {
-  return /espa[nñ]ol|deportes|movistar|spain|españa|latino|m[eé]xico|argentin|\bla 1\b|telemundo|univision|tudn|boing/i.test(name)
+  return /espa[nñ]ol|deportes|movistar|spain|españa|latino|m[eé]xico|argentin|\bla 1\b|telemundo|univision|unimas|tudn|boing|tyc|telefe|eltrece|canal 13|caracol|\brcn\b|azteca|las estrellas|galavisi[oó]n|pasiones|wapa|rcn novelas|espn deportes/i.test(name)
     || /^(es|mx|ar|co|cl|pe|uy|ve)$/i.test(flag) || /^(spain|mexico|argentina)$/i.test(region);
 }
 
@@ -43,6 +43,7 @@ export function liveChannels(raw: unknown): Contracts.LibraryChannel[] {
       quality: asString(channel['quality']).slice(0, 10),
       spanish: isSpanishChannel(name, region, asString(channel['flag'])),
       url: `${EMBED}${id}`,
+      source: 'zlive',
     }];
   });
 }

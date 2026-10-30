@@ -77,3 +77,30 @@ test('sinopsis en español: la ficha espera la traducción; el catálogo usa las
   const library = new FramexLibrary(async () => Response.json(raw), translator, null);
   assert.equal((await library.query(params())).details.overview, 'Un ladrón roba sueños.');
 });
+
+test('subtítulos: reutiliza el texto validado entre instancias sin volver a descargar',async()=>{
+ const store=new MemoryStore();let requests=0;
+ const request=async()=>{requests++;return new Response('WEBVTT\n\n00:00.000 --> 00:01.000\nHola')};
+ const first=new FramexLibrary(request,null,store);
+ const url='https://subs5.strem.io/es/cached.vtt';
+ const text=await first.subtitle(url);
+ assert.match(text,/^WEBVTT/);
+ const reopened=new FramexLibrary(request,null,store);
+ assert.equal(await reopened.subtitle(url),text);
+ assert.equal(requests,1);
+ assert.equal(await reopened.subtitle('https://evil.example/sub.vtt'),null);
+});
+
+test('servidor utilizable no espera indefinidamente subtítulos externos',async()=>{
+ const library=new FramexLibrary(async(input)=>{
+  const path=new URL(input).pathname;
+  if(path==='/api/subtitles')return new Promise(()=>{});
+  if(path==='/api/stream')return Response.json({success:true,sources:[{url:'https://video.example/movie.mp4',type:'mp4',audio:'es'}]});
+  return Response.json({});
+ },null,null);
+ const result=await Promise.race([
+  library.query(new URLSearchParams({op:'stream',id:'1',type:'movie',provider:'test'})),
+  new Promise((_,reject)=>{const timer=setTimeout(()=>reject(new Error('El subtítulo bloqueó la fuente')),1500);timer.unref()}),
+ ]);
+ assert.equal(result.sources[0].audio,'es');
+});

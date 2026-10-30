@@ -35,16 +35,20 @@ export class MemoryStore implements KeyValueStore {
 }
 
 const DATABASE = 'cine';
-const TABLES = ['catalogo', 'traducciones'] as const;
+const TABLES = ['catalogo', 'traducciones', 'subtitulos'] as const;
 export type Table = (typeof TABLES)[number];
 
 let opening: Promise<IDBDatabase> | null = null;
 
 function database(): Promise<IDBDatabase> {
   opening ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(DATABASE, 1);
+    const request = indexedDB.open(DATABASE, 2);
     request.onupgradeneeded = (): void => {
-      for (const table of TABLES) if (!request.result.objectStoreNames.contains(table)) request.result.createObjectStore(table);
+      for (const table of TABLES) {
+        const store = request.result.objectStoreNames.contains(table)
+          ? request.transaction?.objectStore(table) : request.result.createObjectStore(table);
+        if (store && !store.indexNames.contains('at')) store.createIndex('at', 'at');
+      }
     };
     request.onsuccess = (): void => { resolve(request.result); };
     request.onerror = (): void => { reject(request.error ?? new Error('IndexedDB')); };
@@ -70,7 +74,7 @@ export class BrowserStore implements KeyValueStore {
     return this.run(async (store) => {
       const record: unknown = await done(store.get(key));
       return isStored(record) ? record.value : undefined;
-    }, () => this.fallback.get(key));
+    }, () => this.fallback.get(key), 'readonly');
   }
 
   async set(key: string, value: unknown): Promise<void> {
@@ -85,26 +89,34 @@ export class BrowserStore implements KeyValueStore {
         const record: unknown = values[index];
         return typeof key === 'string' && isStored(record) ? [[key, record.value]] : [];
       });
-    }, () => this.fallback.entries());
+    }, () => this.fallback.entries(), 'readonly');
   }
 
   async trim(limit: number): Promise<void> {
     await this.run(async (store) => {
-      const [keys, values] = await Promise.all([done(store.getAllKeys()), done(store.getAll())]);
-      if (keys.length <= limit) return;
-      const ordered = keys.map((key, index) => {
-        const record: unknown = values[index];
-        return { key, at: isStored(record) ? record.at : 0 };
-      }).sort((a, b) => a.at - b.at);
-      await Promise.all(ordered.slice(0, keys.length - limit).map(({ key }) => done(store.delete(key))));
+      let remaining = Math.max(0, await done(store.count()) - limit);
+      if (!remaining) return;
+      // Sólo claves/fechas: no cargar VTT completos ni miles de sinopsis para borrar los más viejos.
+      await new Promise<void>((resolve, reject) => {
+        const request = store.index('at').openKeyCursor();
+        request.onerror = (): void => { reject(request.error ?? new Error('IndexedDB')); };
+        request.onsuccess = (): void => {
+          const cursor = request.result;
+          if (!cursor || remaining <= 0) { resolve(); return; }
+          const deletion = store.delete(cursor.primaryKey);
+          deletion.onerror = (): void => { reject(deletion.error ?? new Error('IndexedDB')); };
+          remaining--;
+          cursor.continue();
+        };
+      });
     }, () => this.fallback.trim(limit));
   }
 
-  private async run<T>(task: (store: IDBObjectStore) => Promise<T>, otherwise: () => Promise<T>): Promise<T> {
+  private async run<T>(task: (store: IDBObjectStore) => Promise<T>, otherwise: () => Promise<T>, mode: IDBTransactionMode = 'readwrite'): Promise<T> {
     if (this.broken) return otherwise();
     try {
       const db = await database();
-      return await task(db.transaction(this.table, 'readwrite').objectStore(this.table));
+      return await task(db.transaction(this.table, mode).objectStore(this.table));
     } catch {
       this.broken = true; // sin IndexedDB: de acá en más, en memoria
       return otherwise();

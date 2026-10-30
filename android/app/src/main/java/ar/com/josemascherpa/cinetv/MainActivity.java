@@ -216,6 +216,7 @@ public final class MainActivity extends Activity implements Screen {
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
 
+        if (Build.VERSION.SDK_INT >= 26) webView.setDefaultFocusHighlightEnabled(false);
         webView.setBackgroundColor(Color.BLACK);
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         webView.setVerticalScrollBarEnabled(false);
@@ -244,14 +245,13 @@ public final class MainActivity extends Activity implements Screen {
         if (webView == null) return;
         pageReady = true;
         webView.requestFocus();
-        webView.animate().alpha(1f).setDuration(300).start();
+        webView.setAlpha(1f);
         if (splash != null) {
             splash.animate().alpha(0f).setDuration(300).withEndAction(() -> {
                 if (splash != null) splash.setVisibility(View.GONE);
             }).start();
         }
-        // El WebView deja el foco en el menú lateral al cargar; el Cine arranca en el destacado.
-        webView.postDelayed(() -> runJs("window.__cineTv&&window.__cineTv.home()"), 250);
+        // El catálogo coloca el foco al recibir sus datos; no enviar Inicio después de cargar.
     }
 
     private void showError(String message) {

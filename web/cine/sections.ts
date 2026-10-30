@@ -3,7 +3,7 @@
 // clave) o con el discover de FrameX (sin clave, sólo tipo y género). Los ids son los géneros,
 // cadenas y plataformas de TMDB.
 
-export type SectionId = 'inicio' | 'peliculas' | 'series' | 'anime' | 'envivo' | 'categorias';
+export type SectionId = 'inicio' | 'favoritos' | 'peliculas' | 'series' | 'anime' | 'latino' | 'envivo' | 'categorias';
 
 export interface Shelf {
   readonly name: string;
@@ -29,9 +29,11 @@ export interface Section {
 
 export const SECTIONS: readonly Section[] = [
   { id: 'inicio', label: 'Inicio' },
+  { id: 'favoritos', label: 'Favoritos' },
   { id: 'peliculas', label: 'Películas' },
   { id: 'series', label: 'Series' },
   { id: 'anime', label: 'Anime' },
+  { id: 'latino', label: 'Latinoamérica' },
   { id: 'envivo', label: 'En vivo' },
   { id: 'categorias', label: 'Categorías' },
 ];
@@ -62,6 +64,7 @@ export const CATEGORIES: readonly Category[] = [
   { name: 'Historia', movie: '36' },
   { name: 'Western', movie: '37', tv: '37' },
   { name: 'Reality', tv: '10764' },
+  { name: 'Telenovelas', tv: '10766' },
 ];
 
 const MOVIES: readonly Shelf[] = [
@@ -124,6 +127,42 @@ const ANIME: readonly Shelf[] = [
   { name: 'Películas de anime más votadas', type: 'movie', genres: '16', language: 'ja', sort: 'top' },
 ];
 
+/** Los países hispanohablantes de América (TMDB acepta varios con "|": cualquiera de ellos). */
+const LATAM = 'AR|MX|CO|CL|PE|VE|UY|EC|BO|PY|DO|GT|CR|HN|SV|NI|PA|CU|PR';
+
+// Latinoamérica y España: cine y series por país, telenovelas y todo lo hablado en español. Sólo
+// TMDB sabe filtrar por país de origen; sin clave, esta sección se omite (como Anime).
+const LATINO: readonly Shelf[] = [
+  { name: 'Cine latinoamericano', type: 'movie', country: LATAM },
+  { name: 'Películas en español', type: 'movie', language: 'es' },
+  { name: 'Cine argentino', type: 'movie', country: 'AR' },
+  { name: 'Cine mexicano', type: 'movie', country: 'MX' },
+  { name: 'Cine español', type: 'movie', country: 'ES' },
+  { name: 'Cine colombiano', type: 'movie', country: 'CO' },
+  { name: 'Cine chileno', type: 'movie', country: 'CL' },
+  { name: 'Cine peruano', type: 'movie', country: 'PE' },
+  { name: 'Cine venezolano', type: 'movie', country: 'VE' },
+  { name: 'Cine uruguayo', type: 'movie', country: 'UY' },
+  { name: 'Cine ecuatoriano', type: 'movie', country: 'EC' },
+  { name: 'Cine cubano', type: 'movie', country: 'CU' },
+  { name: 'Cine dominicano', type: 'movie', country: 'DO' },
+  { name: 'Comedias latinas', type: 'movie', country: LATAM, genres: '35' },
+  { name: 'Terror latino', type: 'movie', country: LATAM, genres: '27' },
+  { name: 'Series latinoamericanas', type: 'tv', country: LATAM },
+  { name: 'Series en español', type: 'tv', language: 'es' },
+  { name: 'Series argentinas', type: 'tv', country: 'AR' },
+  { name: 'Series mexicanas', type: 'tv', country: 'MX' },
+  { name: 'Series españolas', type: 'tv', country: 'ES' },
+  { name: 'Series colombianas', type: 'tv', country: 'CO' },
+  { name: 'Series chilenas', type: 'tv', country: 'CL' },
+  { name: 'Series latinas de comedia', type: 'tv', country: LATAM, genres: '35' },
+  { name: 'Telenovelas', type: 'tv', genres: '10766' },
+  { name: 'Telenovelas mexicanas', type: 'tv', genres: '10766', country: 'MX' },
+  { name: 'Telenovelas argentinas', type: 'tv', genres: '10766', country: 'AR' },
+  { name: 'Telenovelas colombianas', type: 'tv', genres: '10766', country: 'CO' },
+  { name: 'Telenovelas más votadas', type: 'tv', genres: '10766', sort: 'top' },
+];
+
 /** Lo que sólo sabe filtrar TMDB (FrameX sólo filtra por tipo y género). */
 export function needsTmdb(shelf: Shelf): boolean {
   return shelf.language !== undefined || shelf.country !== undefined || shelf.network !== undefined || shelf.provider !== undefined;
@@ -131,7 +170,7 @@ export function needsTmdb(shelf: Shelf): boolean {
 
 /** Las filas de una sección, sin las que no se pueden armar sin TMDB. */
 export function sectionShelves(id: SectionId, tmdb: boolean): readonly Shelf[] {
-  const all = id === 'peliculas' ? MOVIES : id === 'series' ? SERIES : id === 'anime' ? ANIME : [];
+  const all = id === 'peliculas' ? MOVIES : id === 'series' ? SERIES : id === 'anime' ? ANIME : id === 'latino' ? LATINO : [];
   return all.filter((shelf) => tmdb || !needsTmdb(shelf));
 }
 

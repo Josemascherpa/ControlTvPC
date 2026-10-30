@@ -22,10 +22,18 @@ button{border:0;background:none;cursor:pointer;padding:0}
 a{color:inherit;text-decoration:none}
 button:focus,input:focus,a:focus{outline:3px solid #fff;outline-offset:3px}
 [hidden]{display:none!important}
-.icon-btn{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:50%;background:#ffffff1a;font-size:18px;transition:background .15s,transform .2s var(--lift)}
-.icon-btn:hover{background:#ffffff2b}
-.icon-btn:focus{transform:scale(1.1);background:#fff;color:#0b0d10;outline:none}
-.icon-btn.floating{position:fixed;top:24px;left:30px;z-index:5;background:#00000080}
+.icon-btn{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;background:#ffffff1c;border:1px solid transparent;color:#f3f7fa;transition:background .18s,color .18s,border-color .18s,transform .2s var(--lift)}
+.icon-btn svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round;transition:transform .25s var(--glide)}
+.icon-btn:hover{background:#ffffff30}
+.icon-btn:hover svg{transform:translateX(-2px)}
+.icon-btn:focus{transform:scale(1.1);background:#fff;color:#0b0d10;border-color:#fff;outline:none}
+.icon-btn.floating{position:fixed;top:26px;left:32px;z-index:5;width:50px;height:50px;background:#0a0f14c9;border-color:#ffffff2e;box-shadow:0 12px 30px #0008,inset 0 1px 0 #ffffff1f}
+.icon-btn.floating:hover{background:#fff;color:#0b0d10;border-color:#fff}
+.icon-btn.floating:hover svg{transform:translateX(-3px)}
+.btn.is-loading{cursor:default}
+.btn[aria-disabled="true"]{cursor:default}
+.btn[aria-disabled="true"]:focus{background:#ffffff1f;color:#fff;transform:none;box-shadow:none}
+.btn.primary[aria-disabled="true"]:focus{background:#ffffffe6;color:#0b0d10}
 /* Al apretar OK: la tarjeta o el botón "se hunde" un instante (respuesta inmediata al control). */
 .pressed{transform:scale(.94)!important;transition-duration:.08s!important}
 @keyframes spin{to{transform:rotate(1turn)}}
@@ -97,6 +105,8 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 .btn:hover{background:#ffffff30}
 .btn.primary{background:#ffffffe6;color:#0b0d10}
 .btn:focus{outline:none;background:#fff;color:#0b0d10;transform:scale(1.07);box-shadow:0 10px 26px #000a}
+.btn.is-favorite{background:#ff4d6d2e;color:#ffe1e7}
+.btn.is-favorite:focus{background:#ffd9e1;color:#3d0a16}
 .btn .ico{font-size:12px;line-height:1}
 
 /* ---------- Filas ---------- */
@@ -140,9 +150,11 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 /* Categorías y canales en vivo: tarjetas con el nombre. */
 .genre-tile .poster-wrap,.channel-tile .poster-wrap{display:flex;flex-direction:column;justify-content:flex-end;gap:4px;padding:14px 16px;background:linear-gradient(150deg,#22303d,#0f151b 70%);font-size:19px;font-weight:800;letter-spacing:-.3px;color:#eef3f6}
 .genre-tile.is-current .poster-wrap{background:linear-gradient(150deg,#1f6f59,#0f2b24 75%);color:#fff}
-.channel-tile .poster-wrap{background:linear-gradient(150deg,#3a1f2b,#12090d 72%);font-size:17px;line-height:1.2}
-.channel-tile .live-badge{position:absolute;top:12px;left:14px}
-.channel-tile small{font-size:11.5px;font-weight:600;letter-spacing:.2px;color:#c9a9b3}
+.channel-tile .poster-wrap{background:linear-gradient(150deg,#3a1f2b,#12090d 72%);font-size:17px;line-height:1.2;overflow:hidden}
+.channel-tile .live-badge{position:absolute;top:12px;left:14px;z-index:2}
+.channel-tile .channel-logo{position:absolute;inset:0 0 38px;width:100%;height:calc(100% - 38px);object-fit:contain;padding:22px 28px 6px;opacity:.94}
+.channel-tile .channel-name{position:relative;z-index:1;font-weight:800;letter-spacing:-.2px;text-shadow:0 1px 4px #000}
+.channel-tile small{position:relative;z-index:1;font-size:11.5px;font-weight:600;letter-spacing:.2px;color:#c9a9b3}
 .live-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:5px;background:var(--live);font-size:10.5px;font-weight:800;letter-spacing:1.2px;color:#fff}
 .live-badge::before{content:"";width:6px;height:6px;border-radius:50%;background:#fff;animation:pulse 1.4s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.25}}
@@ -219,7 +231,8 @@ h2{font-size:26px;line-height:1.15;margin:0 0 12px;letter-spacing:-.4px}
 
 /* ---------- Canal en vivo ---------- */
 #live{position:fixed;inset:0;z-index:45;background:#000;animation:sheet-fade .25s ease both}
-#liveFrame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000}
+#liveFrame,#liveVideo{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;object-fit:contain}
+.live-status{position:absolute;inset:auto 0 14%;margin:0 auto;max-width:640px;padding:12px 18px;border-radius:10px;background:#000000c4;text-align:center;font-size:15px;color:#fff;z-index:3}
 .live-top{position:absolute;inset:0 0 auto;z-index:2;display:flex;align-items:center;gap:16px;padding:22px 34px 60px;background:linear-gradient(180deg,#000000d9,#00000000);pointer-events:none;transition:opacity .5s ease}
 .live-top h2{margin:0;font-size:20px}
 .live-top p{margin:4px 0 0;font-size:12px;color:#b9c4ce}
@@ -358,3 +371,24 @@ html:not(.touch-ui).overlay-open #catalog,html:not(.touch-ui).overlay-open .rail
 
 html:not(.touch-ui) .hero-image {transition:opacity .3s ease,visibility 0s .3s;visibility:hidden}
 html:not(.touch-ui) .hero-image.is-shown {visibility:visible;transition-delay:0s}
+
+/* El video nunca dibuja el anillo nativo; el foco se indica sólo en controles visibles. */
+#player:focus,#video:focus,#liveVideo:focus,#liveFrame:focus {outline:none!important;box-shadow:none}
+.player-controls .round:focus,.player-controls .pill:focus {transform:none;box-shadow:inset 0 0 0 2px #fff}
+.player-controls .round,.player-controls .pill {transition:background .12s ease,color .12s ease}
+
+/* TV: respuesta breve al mando, sin animar ancho ni geometría de los subtítulos. */
+html:not(.touch-ui) .rail {transition:background .14s ease}
+html:not(.touch-ui) .rail-label {transition:opacity .12s ease,transform .14s ease}
+html:not(.touch-ui) .rail-scrim {transition:opacity .12s ease}
+html:not(.touch-ui) .menu-item {transition:background .12s ease,color .12s ease,transform .14s ease}
+html:not(.touch-ui) .hero-text {transition:opacity .12s ease,transform .14s ease}
+html:not(.touch-ui) .hero-copy.is-changing .hero-text {transition-duration:.06s}
+html:not(.touch-ui) #details.is-open,html:not(.touch-ui) #player {animation-duration:.14s}
+html:not(.touch-ui) #details.is-open .detail-hero {animation-duration:.18s}
+html:not(.touch-ui) #details.is-open .detail-bg img {animation:none}
+html:not(.touch-ui) .subtitle-box {transition:none}
+
+/* Un solo brillo de carga en TV: el del foco. Evita decenas de capas animadas al iniciar. */
+html:not(.touch-ui) .shimmer::after {animation:none}
+html:not(.touch-ui) .card:focus .shimmer::after {animation:shimmer 1.4s ease-in-out infinite}

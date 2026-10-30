@@ -23,6 +23,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import ar.com.josemascherpa.cinetv.BuildConfig;
 import ar.com.josemascherpa.cinetv.remote.RemoteCommand;
 
 /**
@@ -39,6 +40,7 @@ public final class TvServer {
 
     private static final String TAG = "CineTV";
     public static final int DEFAULT_PORT = 8001;
+    private static final String BUNDLE_PREFIX = "/bundle/" + BuildConfig.VERSION_CODE + "/";
 
     private static final int MAX_HEADER_BYTES = 16 * 1024;
     private static final int MAX_FRAME_BYTES = 256 * 1024;
@@ -188,6 +190,8 @@ public final class TvServer {
             return;
         }
 
+        boolean versioned = path.startsWith(BUNDLE_PREFIX);
+        if (versioned) path = "/" + path.substring(BUNDLE_PREFIX.length());
         boolean index = "/".equals(path) || "/index.html".equals(path);
         String assetPath = index ? "index.html" : path.substring(1);
         byte[] body = assets.read(assetPath);
@@ -196,7 +200,7 @@ public final class TvServer {
             return;
         }
         if (index) body = indexWithScripts(body);
-        writeFile(out, body, Assets.mime(assetPath));
+        writeFile(out, body, Assets.mime(assetPath), versioned && !index);
     }
 
     /**
@@ -206,6 +210,7 @@ public final class TvServer {
      */
     private static byte[] indexWithScripts(byte[] html) {
         String text = new String(html, StandardCharsets.UTF_8);
+        text = text.replace("<head>", "<head>\n<base href=\"" + BUNDLE_PREFIX + "\">");
         int at = text.indexOf("</head>");
         if (at < 0) return html;
         String scripts = "  <script src=\"js/web/inject.js\"></script>\n"
@@ -436,16 +441,21 @@ public final class TvServer {
         writeResponse(out, status, "application/json; charset=utf-8", body.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private static void writeFile(OutputStream out, byte[] body, String mime) throws IOException {
-        writeResponse(out, 200, mime, body);
+    private static void writeFile(OutputStream out, byte[] body, String mime, boolean immutable) throws IOException {
+        writeResponse(out, 200, mime, body, immutable ? "private, max-age=31536000, immutable" : "no-store");
     }
 
     private static void writeResponse(OutputStream out, int status, String contentType, byte[] body)
         throws IOException {
+        writeResponse(out, status, contentType, body, "no-store");
+    }
+
+    private static void writeResponse(OutputStream out, int status, String contentType, byte[] body,
+                                      String cacheControl) throws IOException {
         String head = "HTTP/1.1 " + status + " " + reason(status) + "\r\n"
             + "Content-Type: " + contentType + "\r\n"
             + "Content-Length: " + body.length + "\r\n"
-            + "Cache-Control: no-cache\r\n"
+            + "Cache-Control: " + cacheControl + "\r\n"
             + "Connection: close\r\n\r\n";
         out.write(head.getBytes(StandardCharsets.US_ASCII));
         out.write(body);

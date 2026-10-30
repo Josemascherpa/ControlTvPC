@@ -19,9 +19,11 @@ android {
         applicationId = "ar.com.josemascherpa.cinetv"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "1.4"
     }
+
+    buildFeatures { buildConfig = true }
 
     signingConfigs {
         // Llave fija del APK (queda en el repo para que las actualizaciones se instalen encima).

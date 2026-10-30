@@ -101,14 +101,18 @@ ejecuta su JavaScript: sólo se validan los datos y las fuentes.
 
 - **Menú lateral** (como Netflix/Disney+/Prime en la tele): íconos a la izquierda; se abre con la
   flecha izquierda desde el borde del contenido; elegir cierra el menú y pasa el foco al contenido.
-  Buscar, Inicio, Películas, Series, Anime, En vivo, Categorías y Legal - DMCA (`sections.ts`, sólo datos).
+  Buscar, Inicio, Favoritos, Películas, Series, Anime, Latinoamérica, En vivo, Categorías y Legal - DMCA (`sections.ts`, sólo datos).
 - **Buscar:** teclado en pantalla (filas de `.key`) + el campo `#search`, donde también escribe el
   celular (`__controlTvPrepareText` abre el buscador). Con TMDB busca en TMDB (`/search/multi`, es-MX).
-- **En vivo** (`live.ts`): `https://zlive.st/embed/manifest.json` (CORS, pensado para insertar). El
-  video de zlive va con tickets y enlaces firmados: NO extraerlo; se usa su reproductor en un iframe
-  con `sandbox` sin `allow-popups` ni `allow-top-navigation`. Sólo URLs `https://zlive.st/embed/<slug>`.
-  Varias señales "auto-…" suelen estar caídas en zlive mismo (medido fuera del Cine), no es el Cine. Cada fila es un `op=shelf`: con clave de
-  TMDB (`ui/ajustes.json`, gitignored; `tmdb.ts`, `language=es-MX`) o, sin clave, `/api/discover`
+- **En vivo** (`live.ts` + `iptv.ts`): dos fuentes. zlive (`https://zlive.st/embed/manifest.json`, CORS)
+  va con su reproductor en un iframe `sandbox` sin `allow-popups` ni `allow-top-navigation`; el video va
+  con tickets y enlaces firmados, NO extraerlo, sólo URLs `https://zlive.st/embed/<slug>`. La TV abierta
+  de iptv-org (`https://iptv-org.github.io/iptv/countries/<país>.m3u`, CORS `*`) se reproduce con el
+  `<video>` propio y hls.js: sólo enlaces HTTPS HLS/MP4, hasta 24 por país, 20 países hispanohablantes
+  y los canales hispanos de EE. UU. (`us.m3u`, filtrados por nombre).
+  Varias señales "auto-…" suelen estar caídas en zlive mismo (medido fuera del Cine), no es el Cine.
+  Cada fila es un `op=shelf`: con clave de
+  TMDB (`ui/ajustes.json`, gitignored; `tmdb.ts`, `language=es-MX` o `es-ES` con `tmdbLanguage`) o, sin clave, `/api/discover`
   (FrameX sólo filtra `type`, `genre`, `sort`, `year`; probado: ignora idioma, país y cadena) y
   `/api/trending?type=`. Anime, plataformas y "en español" necesitan TMDB (sin clave se omiten). Los
   ids de TMDB son los mismos de FrameX. Filas de a 3 consultas, guardadas 30 min (SWR).
@@ -120,8 +124,11 @@ ejecuta su JavaScript: sólo se validan los datos y las fuentes.
 - **Catálogo:** 8 filas de 20 títulos + destacado. Tarjetas apaisadas con el backdrop `w780` (la misma
   imagen del destacado: se baja una vez); episodios `w342`. TMDB entrega WebP por `Accept`.
 - **Caché** (`store.ts`, IndexedDB, base `cine`): catálogo, fichas y búsquedas con stale-while-revalidate
-  (lo guardado se muestra al instante y se actualiza por detrás; tope 400 registros) y traducciones
-  (tope 20.000). Las imágenes las guarda la caché HTTP del navegador.
+  (lo guardado se muestra al instante y se actualiza por detrás; tope 900 registros; catálogo 15 min,
+  ficha 24 h, filas 2 h) y traducciones (tope 20.000). Las imágenes las guarda la caché HTTP del navegador.
+- **Favoritos** (`favorites.ts`, localStorage `cine:favorites:v1`): se agregan desde la ficha
+  (`#detailFavorite`), se ven en la sección Favoritos y en la fila "Tus favoritos" del inicio, y se
+  guardan con los datos justos para abrir la ficha sin red. Tope 120.
 - **Servidores:** se muestran sólo los `available` que no son `clientOnly`. "Reproducir" los prueba
   escalonados cada 1,2 s (gana el primero que sirve); la fuente queda 15 min y se prebusca al abrir la
   ficha. Si falla, el reproductor pide otro con `exclude`. No fijar ids de servidores en el código.
@@ -147,7 +154,8 @@ ejecuta su JavaScript: sólo se validan los datos y las fuentes.
   `content-visibility` en filas o tarjetas: recorta el agrandado del foco. Toda curva `var(--x)` tiene
   que estar definida en `:root`: si no, el navegador descarta la transición entera (pasó con `--glide`).
 - **Reproductor:** búfer acotado (20/40 s, 24 MB), techo 1080p y preferencia AVC, `-10/+10`, audio,
-  siguiente episodio, progreso en `localStorage` (`cine:progress:v1`, "Continuar viendo"). Sin iframes.
+  siguiente episodio (cruza de temporada: `episodes.ts`), progreso en `localStorage`
+  (`cine:progress:v1`, "Continuar viendo"). Sin iframes.
 - **Red de la casa:** el IPv6 está roto (conexiones de 7 s o cortes de más de 15 s; IPv4 50–100 ms).
   Como ahora todo lo pide Edge, conviene `optimizacion/preferir-ipv4.ps1` (como administrador, lo corre la persona).
 - **Límites:** la API es pública pero no oficial y los servidores pueden caerse o cambiar. Sin cuentas ni DRM.

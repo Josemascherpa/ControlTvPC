@@ -349,6 +349,8 @@ test('filas del menú: un título en otro alfabeto (anime sin nombre en español
 
 test('en vivo: sólo canales de zlive con su reproductor, primero los que están en español, sin rotos', async () => {
   const library = new FramexLibrary(async (url) => {
+    // iptv-org se suma al listado; acá contesta vacío para probar sólo zlive.
+    if (url.startsWith('https://iptv-org.github.io/iptv/countries/')) return new Response('#EXTM3U\n');
     assert.equal(url, 'https://zlive.st/embed/manifest.json');
     return Response.json({ channels: [
       { id: 'auto-espn-deportes', name: 'ESPN Deportes', sport: 'Sports', live: true, url: 'https://zlive.st/embed/auto-espn-deportes' },
@@ -359,8 +361,35 @@ test('en vivo: sólo canales de zlive con su reproductor, primero los que están
     ] });
   });
   const reply = await library.query(query({ op: 'live' }));
-  assert.deepEqual(reply.channels.map((channel) => [channel.name, channel.category, channel.spanish]),
-    [['ESPN Deportes', 'Deportes', true], ['CNN', 'Noticias', false]]);
+  assert.deepEqual(reply.channels.map((channel) => [channel.name, channel.category, channel.spanish, channel.source]),
+    [['ESPN Deportes', 'Deportes', true, 'zlive'], ['CNN', 'Noticias', false, 'zlive']]);
+});
+
+test('en vivo: suma los canales de TV abierta de iptv-org, validados y por país', async () => {
+  const library = new FramexLibrary(async (url) => {
+    if (url === 'https://zlive.st/embed/manifest.json') return Response.json({ channels: [] });
+    if (url === 'https://iptv-org.github.io/iptv/countries/ar.m3u') {
+      return new Response([
+        '#EXTM3U',
+        '#EXTINF:-1 tvg-id="eltrece.ar" tvg-logo="https://cdn.example/eltrece.png" group-title="General",El Trece HD',
+        'https://cdn.example/eltrece.m3u8',
+        '#EXTINF:-1 group-title="News",Canal inseguro',
+        'http://cdn.example/inseguro.m3u8',
+        '#EXTINF:-1 group-title="Sports",Canal repetido',
+        'https://cdn.example/eltrece.m3u8',
+      ].join('\n'));
+    }
+    if (url.startsWith('https://iptv-org.github.io/iptv/countries/')) return new Response('#EXTM3U\n');
+    throw new Error(`pedido inesperado: ${url}`);
+  });
+  const reply = await library.query(query({ op: 'live' }));
+  const iptv = reply.channels.filter((channel) => channel.source === 'iptv');
+  assert.equal(iptv.length, 1, 'Descarta HTTP y enlaces repetidos');
+  assert.equal(iptv[0].name, 'El Trece');
+  assert.equal(iptv[0].region, 'Argentina');
+  assert.equal(iptv[0].country, 'ar');
+  assert.equal(iptv[0].logo, 'https://cdn.example/eltrece.png');
+  assert.equal(iptv[0].url, 'https://cdn.example/eltrece.m3u8');
 });
 
 test('subtítulos: se suman los del título (FrameX los da aparte), sólo en español y los latinos primero', async () => {

@@ -27,3 +27,21 @@ El trabajo de hilo principal disminuyó entre 68 y 78 %. El presupuesto de píxe
 - Android Lint y compilación release.
 
 El benchmark sirve para comparar cambios; no garantiza 60 FPS en hardware físico. El modelo de TV fue informado por el usuario; no se tiene acceso remoto al BGH.
+
+## Actualización 1.4
+
+Se aplicaron técnicas de [animación con transform/opacity](https://web.dev/articles/animations-guide)
+y reducción de memoria acordes con [Android TV](https://developer.android.com/training/tv/playback/memory).
+
+Se mantiene el render acotado de 1.3, y se suma caché HTTP versionada de assets, lectura readonly
+para catálogo, carga de imágenes de a cuatro por cuadro, mantenimiento de caché fuera del arranque,
+un solo shimmer de foco y transiciones más cortas. Se evita enviar Inicio 250 ms después de cargar.
+
+Verificación en WebView Android: caché reutilizada al navegar nuevamente, layout TV con 160 títulos,
+recorrido de las ocho filas, navegación espacial del reproductor y contorno de foco desactivado.
+La prueba funcional usa WebVTT y video con HTTP Range para comprobar desfase positivo, adelanto,
+restablecimiento y menú de ajuste persistente. El reloj de subtítulos utiliza índice binario y sólo
+cambia el DOM cuando cambia la frase; no recorre y redibuja toda la pista en cada actualización.
+
+No se garantiza un número de FPS del BGH sin medir en ese equipo. Los resultados cuantitativos
+anteriores corresponden a la comparación 1.2→1.3 y no se presentan como una nueva medición de 1.4.

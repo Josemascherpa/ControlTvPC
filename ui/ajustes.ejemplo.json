@@ -1,3 +1,4 @@
 {
-  "tmdb": "pegá acá tu API Key (v3) o tu token de lectura (v4) de themoviedb.org"
+  "tmdb": "pegá acá tu API Key (v3) o tu token de lectura (v4) de themoviedb.org",
+  "tmdbLanguage": "es-MX"
 }

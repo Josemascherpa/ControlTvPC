@@ -63,7 +63,9 @@
 <section id="details" hidden aria-label="Ficha del título">
   <div class="detail-bg"><img id="detailImage" alt="" decoding="async"></div>
   <div class="detail-shade"></div>
-  <button id="detailClose" class="icon-btn floating" type="button" aria-label="Volver al catálogo">←</button>
+  <button id="detailClose" class="icon-btn floating" type="button" aria-label="Volver al catálogo">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7"/></svg>
+  </button>
   <div class="detail-body" id="detailBody">
     <div class="detail-hero">
     <p class="eyebrow" id="detailKind"></p>
@@ -74,6 +76,7 @@
     <p class="cast" id="detailCast"></p>
     <div class="actions">
       <button id="detailPlay" class="btn primary" type="button"><span class="ico">▶</span>Reproducir</button>
+      <button id="detailFavorite" class="btn" type="button" aria-pressed="false">♡ Favoritos</button>
       <button id="detailServers" class="btn" type="button">Servidores</button>
     </div>
     <p id="detailStatus" class="status" role="status"></p>
@@ -106,21 +109,25 @@
 </section>
 
 <section id="live" hidden aria-label="Canal en vivo">
-  <!-- El reproductor del canal (zlive.st) en un marco aislado: sin ventanas nuevas ni salir del Cine. -->
+  <!-- Los canales de zlive van con su reproductor (marco aislado); los de iptv-org, en el <video> propio. -->
   <iframe id="liveFrame" title="Canal en vivo" sandbox="allow-scripts allow-same-origin allow-presentation"
     allow="autoplay; fullscreen; encrypted-media; picture-in-picture" referrerpolicy="origin" tabindex="-1"></iframe>
+  <video id="liveVideo" playsinline preload="none" tabindex="-1" hidden></video>
   <div id="liveTop" class="live-top">
     <span class="live-badge">EN VIVO</span>
     <div><h2 id="liveName"></h2><p>Atrás para salir · si no arranca, tocá la imagen con el mouse del celular</p></div>
   </div>
   <div id="liveLoading" class="player-center"><span class="spinner" aria-hidden="true"></span><p class="status">Conectando con el canal…</p></div>
+  <p id="liveStatus" class="status live-status" role="status" hidden></p>
 </section>
 
 <section id="player" hidden aria-label="Reproductor">
   <video id="video" playsinline preload="none" tabindex="-1"></video>
   <div id="subtitleBox" class="subtitle-box" aria-hidden="true"></div>
   <div id="playerTop" class="player-top" hidden>
-    <button id="playerBack" class="icon-btn" type="button" aria-label="Volver">←</button>
+    <button id="playerBack" class="icon-btn" type="button" aria-label="Volver">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7"/></svg>
+    </button>
     <div class="player-title"><h2 id="playingTitle"></h2><p id="playingMeta"></p></div>
   </div>
   <div id="playerControls" class="player-controls" hidden>
@@ -134,6 +141,7 @@
       <button id="subtitlesBtn" class="pill" type="button">Subtítulos</button>
       <button id="subtitleSizeBtn" class="pill" type="button">Tamaño</button>
       <button id="subtitleHeightBtn" class="pill" type="button">Altura</button>
+      <button id="subtitleSyncBtn" class="pill" type="button">Sync: 0 s</button>
       <button id="audioBtn" class="pill" type="button">Audio</button>
       <button id="qualityBtn" class="pill" type="button">Calidad</button>
       <button id="serverBtn" class="pill" type="button">Servidor</button>

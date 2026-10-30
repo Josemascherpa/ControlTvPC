@@ -27,7 +27,7 @@ function framex(url, videoUrl) {
   if (path === '/api/season') return { success: true, season_number: 1, episodes: [{ episode_number: 1, name: 'Piloto', overview: 'El comienzo.', still: '', vote_average: 8 }] };
   if (path === '/api/discover' || path === '/api/trending') return { success: true, results: [{ ...movie, id: 3, title: 'Película de la sección' }] };
   if (path === '/api/providers') return { providers: [{ id: 'test', name: 'Servidor de prueba', tagline: 'Local', status: 'available' }] };
-  if (path === '/api/stream') return { success: true, provider: 'test', sources: [{ url: videoUrl, type: 'mp4', quality: 'Muestra local', server: 'Local', audio: 'es' }], subtitles: [], alternates: [] };
+  if (path === '/api/stream') return { success: true, provider: 'test', sources: [{ url: videoUrl, type: 'mp4', quality: 'Muestra local', server: 'Local', audio: 'es' }], subtitles: [{url:'https://subs5.strem.io/es/test.vtt',label:'Español',lang:'es'}], alternates: [] };
   return null;
 }
 
@@ -35,9 +35,16 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
   let videoBytes = Buffer.alloc(0);
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
+    if (url.pathname === '/migration.html') { res.setHeader('Content-Type','text/html');res.end('<!doctype html><title>Migration fixture</title>');return; }
     if (url.pathname === '/video.webm') {
       res.setHeader('Content-Type', 'video/webm');
-      res.end(videoBytes);
+      res.setHeader('Accept-Ranges','bytes');
+      const range=/bytes=(\d+)-(\d*)/.exec(req.headers.range || '');
+      if(range){
+        const start=Number(range[1]);const end=Math.min(videoBytes.length-1,range[2]?Number(range[2]):videoBytes.length-1);
+        res.writeHead(206,{'Content-Range':`bytes ${start}-${end}/${videoBytes.length}`,'Content-Length':end-start+1});
+        res.end(videoBytes.subarray(start,end+1));
+      } else {res.setHeader('Content-Length',videoBytes.length);res.end(videoBytes);}
       return;
     }
     // Sin la clave de TMDB de la persona (si la tiene): la prueba no sale a internet.
@@ -74,16 +81,16 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
   // Internet de mentira: FrameX contesta con datos de prueba; el traductor, sin respuesta (queda el texto original).
   client.on('Fetch.requestPaused', ({ requestId, request }) => {
     const url = new URL(request.url);
-    const body = url.hostname === 'api.framextv.xyz' ? framex(url, `${origin}/video.webm`) : null;
+    const body = url.hostname === 'subs5.strem.io' ? 'WEBVTT\n\n00:00.000 --> 00:00.400\nHola prueba' : url.hostname === 'api.framextv.xyz' ? framex(url, `${origin}/video.webm`) : null;
     if (url.hostname === 'api.framextv.xyz') apiCalls.push(url.pathname);
     if (!body) { void send('Fetch.failRequest', { requestId, errorReason: 'Failed' }).catch(() => {}); return; }
     void send('Fetch.fulfillRequest', {
       requestId, responseCode: 200,
-      responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Access-Control-Allow-Origin', value: '*' }],
-      body: Buffer.from(JSON.stringify(body)).toString('base64'),
+      responseHeaders: [{ name: 'Content-Type', value: typeof body === 'string' ? 'text/vtt' : 'application/json' }, { name: 'Access-Control-Allow-Origin', value: '*' }],
+      body: Buffer.from(typeof body === 'string' ? body : JSON.stringify(body)).toString('base64'),
     }).catch(() => {});
   });
-  await send('Fetch.enable', { patterns: [{ urlPattern: 'https://api.framextv.xyz/*' }, { urlPattern: 'https://clients5.google.com/*' }, { urlPattern: 'https://translate.googleapis.com/*' }] });
+  await send('Fetch.enable', { patterns: [{ urlPattern: 'https://api.framextv.xyz/*' }, { urlPattern: 'https://subs5.strem.io/*' }, { urlPattern: 'https://clients5.google.com/*' }, { urlPattern: 'https://translate.googleapis.com/*' }] });
   const evaluate = async (expression) => {
     const value = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
     assert.equal(value.exceptionDetails, undefined, JSON.stringify(value.exceptionDetails));
@@ -98,6 +105,10 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
     await send('Input.dispatchKeyEvent', { type: key === 'Enter' ? 'keyDown' : 'rawKeyDown', key, code: key, windowsVirtualKeyCode: vk, ...(key === 'Enter' ? { text: '\r' } : {}) });
     await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key, windowsVirtualKeyCode: vk });
   };
+  // Migración desde la caché 1.x: conserva los datos e incorpora el índice sin leer VTT completos.
+  await send('Page.navigate', { url: `${origin}/migration.html` });
+  await until('document.title==="Migration fixture"');
+  await evaluate(`new Promise((resolve,reject)=>{const r=indexedDB.open('cine',1);r.onupgradeneeded=()=>{r.result.createObjectStore('catalogo');r.result.createObjectStore('traducciones')};r.onsuccess=()=>{const db=r.result;const tx=db.transaction('traducciones','readwrite');tx.objectStore('traducciones').put({at:1,value:'Conservado'},'migration');tx.oncomplete=()=>{db.close();resolve(true)}};r.onerror=()=>reject(r.error)})`);
   // Video local de un lienzo; no usa películas, cuentas ni servidores externos.
   videoBytes = Buffer.from(await evaluate(`new Promise(resolve=>{
     const canvas=document.createElement('canvas');canvas.width=320;canvas.height=180;
@@ -111,19 +122,55 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
   await send('Page.navigate', { url: `${origin}/` });
   await until('document.querySelectorAll(".card").length===2');
   assert.ok(apiCalls.includes('/api/home'), 'La app pidió el catálogo directo a la API');
+  const migration = await evaluate(`new Promise((resolve,reject)=>{const r=indexedDB.open('cine');r.onsuccess=()=>{const db=r.result;const tx=db.transaction('traducciones');const q=tx.objectStore('traducciones').get('migration');q.onsuccess=()=>{resolve({version:db.version,value:q.result.value,subs:db.objectStoreNames.contains('subtitulos'),index:tx.objectStore('traducciones').indexNames.contains('at')});db.close()}};r.onerror=()=>reject(r.error)})`);
+  assert.deepEqual(migration,{version:2,value:'Conservado',subs:true,index:true});
+
   assert.equal(await evaluate('document.getElementById("hero").hidden'), false);
   assert.equal(await evaluate('document.activeElement.id'), 'heroPlay', 'Empieza en Reproducir');
   await key('ArrowDown', 40);
   assert.equal(await evaluate('document.activeElement.classList.contains("card")'), true, 'Baja a la primera fila');
   await key('Enter', 13);
   await until('!document.getElementById("details").hidden');
-  await until('!document.getElementById("detailPlay").disabled && document.activeElement.id==="detailPlay"');
+  await until('!document.getElementById("detailPlay").disabled && document.getElementById("detailPlay").getAttribute("aria-disabled")!=="true" && document.activeElement.id==="detailPlay"');
   assert.match(await evaluate('document.getElementById("detailMeta").textContent'), /Acción/, 'Géneros en español');
   await key('Enter', 13);
   await until('!document.getElementById("player").hidden');
   await until('document.getElementById("video").currentTime>0');
   const frames = await evaluate('document.getElementById("video").getVideoPlaybackQuality().totalVideoFrames');
   assert.ok(frames > 0, 'Video realmente decodificado');
+  await evaluate('document.getElementById("video").pause();document.getElementById("toggle").focus()');
+  await key('ArrowRight',39);
+  assert.equal(await evaluate('document.activeElement.id'),'forward','Derecha mueve el foco, no el video');
+  await key('ArrowRight',39);
+  assert.equal(await evaluate('document.activeElement.id'),'subtitlesBtn');
+  await key('Enter',13);
+  await until('!document.getElementById("playerMenu").hidden');
+  await key('ArrowDown',40);
+  await key('Enter',13);
+  await until('document.getElementById("video").textTracks[0]?.cues?.length>0');
+  assert.equal(await evaluate('document.activeElement.id'),'subtitlesBtn','Cerrar opciones devuelve el foco al botón');
+  await key('ArrowUp',38);
+  assert.equal(await evaluate('document.activeElement.id'),'playerBack','Arriba permite llegar a Volver');
+  await key('ArrowDown',40);
+  assert.equal(await evaluate('document.activeElement.id'),'rewind','Abajo sigue la posición visual');
+  await evaluate('document.getElementById("video").focus()');
+  assert.equal(await evaluate('getComputedStyle(document.getElementById("video")).outlineStyle'),'none','El video no dibuja borde de foco');
+  await evaluate('document.getElementById("player").classList.add("idle")');
+  await key('ArrowRight',39);
+  assert.equal(await evaluate('document.activeElement.id'),'toggle','La primera flecha despierta los controles sin cambiar de acción');
+  await evaluate('document.getElementById("video").currentTime=.2');
+  await until('document.getElementById("subtitleBox").textContent.includes("Hola prueba")');
+  await evaluate('document.getElementById("subtitleSyncBtn").click()');
+  await evaluate('[...document.querySelectorAll(".menu-option")].find(b=>b.textContent.includes("Atrasar 0,25 s")).click()');
+  assert.equal(await evaluate('document.getElementById("playerMenu").hidden'),false,'El ajuste fino no cierra el menú');
+  assert.equal(await evaluate('document.getElementById("subtitleBox").textContent'),'','Atrasar oculta la frase hasta el momento correcto');
+  await evaluate('document.getElementById("video").currentTime=.6');
+  await until('document.getElementById("subtitleBox").textContent.includes("Hola prueba")');
+  await evaluate('[...document.querySelectorAll(".menu-option")].find(b=>b.textContent.includes("Restablecer sincronización")).click()');
+  assert.equal(await evaluate('document.getElementById("subtitleBox").textContent'),'');
+  await key('Escape',27);
+
+
   assert.equal(await evaluate('window.__controlTvBack()'), true);
   assert.equal(await evaluate('document.getElementById("player").hidden'), true);
   assert.equal(await evaluate('document.getElementById("details").hidden'), false, 'Vuelve a la ficha');
@@ -178,6 +225,8 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
   await key('ArrowLeft', 37);
   assert.equal(await evaluate('document.activeElement.dataset.section'), 'inicio', 'El menú se abre en la sección actual');
   await key('ArrowDown', 40);
+  assert.equal(await evaluate('document.activeElement.dataset.section'), 'favoritos');
+  await key('ArrowDown', 40);
   assert.equal(await evaluate('document.activeElement.dataset.section'), 'peliculas');
   await key('Enter', 13);
   await until('document.querySelectorAll(".row:not(.skeleton)").length > 3');
@@ -222,7 +271,7 @@ test('Cine autónomo: catálogo con flechas, ficha, serie y reproducción real, 
   assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'), true, 'No desborda la pantalla del teléfono');
   assert.equal(await evaluate('getComputedStyle(document.getElementById("catalog")).overflowY'), 'auto', 'El catálogo permite scroll táctil');
   await tap('#heroInfo');
-  await until('!document.getElementById("details").hidden && !document.getElementById("detailPlay").disabled');
+  await until('!document.getElementById("details").hidden && !document.getElementById("detailPlay").disabled && document.getElementById("detailPlay").getAttribute("aria-disabled")!=="true"');
   await delay(600);
   await tap('#detailPlay');
   await until('!document.getElementById("player").hidden && document.getElementById("video").currentTime>0');

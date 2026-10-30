@@ -23,7 +23,7 @@ El APK se compila una vez (ver [Compilar](#compilar)) y queda en `CineTV-<versi�
 Para pasarlo al televisor, cualquiera de estas:
 
 - **Por ADB** (lo más rápido si tenés la tele en la misma red con depuración activada):
-  `adb connect <ip-del-tele>:5555` y después `adb install -r CineTV-1.3.apk`.
+  `adb connect <ip-del-tele>:5555` y después `adb install -r CineTV-1.4.apk`.
 - **Por USB:** copiá el APK a un pendrive, lo enchufás en la tele y lo abrís con un explorador
   de archivos (en Android TV/Google TV: *Archivos* o *FX File Explorer*).
 - **En Fire TV / TV boxes:** con la app *Downloader* (o el navegador) bajás el APK desde donde lo
@@ -35,7 +35,7 @@ Después aparece **Cine TV** en la fila de apps del televisor.
 
 ## Teléfonos y tablets
 
-La versión 1.3 detecta el tipo de dispositivo. En televisores mantiene la interfaz para mando y
+La versión 1.4 detecta el tipo de dispositivo. En televisores mantiene la interfaz para mando y
 orientación horizontal; en teléfonos y tablets táctiles respeta la orientación del dispositivo,
 permite deslizar el catálogo y las filas con el dedo y usa el teclado del sistema para buscar.
 El botón de menú abre un drawer a la izquierda. Al reproducir una película, episodio o canal
@@ -46,10 +46,10 @@ y las opciones se distribuyen en varias líneas cuando falta ancho.
 ## Descargar desde el televisor con Downloader
 
 Downloader no aloja el archivo: descarga el APK desde una dirección web.
-Para tener un enlace público, podés adjuntar `CineTV-1.3.apk` a una release de este repositorio:
+Para tener un enlace público, podés adjuntar `CineTV-1.4.apk` a una release de este repositorio:
 
 1. En GitHub abrí **Releases → Draft a new release**.
-2. Elegí la rama `android-tv` (debe estar subida), creá una etiqueta como `cinetv-v1.3`
+2. Elegí la rama `android-tv` (debe estar subida), creá una etiqueta como `cinetv-v1.4`
    y adjuntá el APK en la sección de archivos de la release.
 3. Publicá la release y copiá el enlace del archivo adjunto, que termina en `.apk`.
 4. En la TV abrí **Downloader by AFTVnews**, pegá ese enlace y descargá el archivo.
@@ -59,7 +59,7 @@ El repositorio/release debe ser público para descargar sin iniciar sesión. El 
 Downloader es opcional: se obtiene después de tener el enlace público del APK.
 También podés transferir el archivo desde el celular o por USB sin publicarlo.
 
-La release `cinetv-v1.3` incluye el APK firmado para instalación directa.
+La release `cinetv-v1.4` incluye el APK firmado para instalación directa.
 
 ## Usar
 
@@ -164,3 +164,22 @@ web/tv/bridge.ts            el puente que el servidor le inyecta al Cine (teclas
 
 Encabezado y filas con Flex, ventana de render limitada y miniaturas dimensionadas.
 Ver [mediciones y límites](../docs/android-performance.md).
+
+## Versión 1.4
+
+Integra `origin/main` (a74e1dd): favoritos, cambios de episodios, IPTV y subtítulos.
+
+- El mando sigue la posición visual de los botones; la primera flecha muestra los controles y
+  cada movimiento renueva su temporizador. Se desactiva el foco nativo del video/WebView.
+- Caché local de módulos, estilos y fuentes en `/bundle/<versionCode>/`. El HTML no se cachea;
+  al actualizar cambia el prefijo y no se reutiliza JavaScript de la versión anterior.
+- Lecturas de catálogo en transacciones readonly; mantenimiento diferido, imágenes por tandas y
+  un único brillo de carga animado en el foco. El primer foco se establece al llegar el catálogo.
+- Subtítulos WebVTT/SRT validados en caché por siete días, en una tabla separada con tope de 24 archivos; blobs liberados al cambiar la fuente.
+- Sync corrige atrasos/adelantos en pasos de 0,25 s y permite ajustar ritmo 24/25/23,976 fps.
+  Se guarda por película/episodio, servidor y pista, sin afectar los demás títulos.
+- Se priorizan subtítulos del servidor. Un subtítulo externo lento tiene espera limitada;
+  las fuentes que no arrancan o se quedan esperando se recuperan con otro servidor.
+
+Una pista correspondiente a otra edición/corte puede necesitar otra pista, además de ajustar Sync.
+El rendimiento final y la reproducción con proveedores externos requieren prueba en la TV física.
