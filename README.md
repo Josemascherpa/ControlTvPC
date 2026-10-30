@@ -68,6 +68,18 @@ guardados) y siguiente episodio. Si la fuente está en idioma original, Audio y 
 
 Para sacarlo del inicio automático: `desinstalar.ps1`.
 
+## En la tele, como una app (APK)
+
+El mismo Cine se puede instalar **dentro del televisor**, sin notebook: es una app de Android TV /
+Google TV / Fire TV / TV box (los "como Magis TV"). Se maneja con el mando del televisor y, además,
+la app ControlTv del celular la encuentra y la maneja igual que a la notebook: le habla Samsung.
+
+- Está en `android/` y el APK ya compilado queda como `CineTV-1.0.apk` en esta carpeta.
+- Para compilarlo: `npm run build:typescript` y después `npm run apk` (o
+  `powershell -ExecutionPolicy Bypass -File android/compilar-apk.ps1`).
+- Se instala con `adb install -r CineTV-1.0.apk`, desde un pendrive o con *Downloader* en Fire TV.
+- Todo el detalle (cómo se usa, qué hace y qué no, cómo está hecho): [`android/README.md`](android/README.md).
+
 ## Recomendaciones para que vaya fluido
 
 - **Red:** el IPv6 de la casa anda mal (conexiones de varios segundos). Corré una vez, como

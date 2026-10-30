@@ -6,3 +6,11 @@ native/input-host.exe
 work/
 ui/vendor/
 ui/ajustes.json
+
+# App de Android TV (el APK se compila aparte)
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+CineTV-*.apk

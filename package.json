@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "check": "npm run typecheck && npm run lint",
     "test": "npm run build:typescript && node --test tests/*.test.cjs",
+    "apk": "powershell -NoProfile -ExecutionPolicy Bypass -File android/compilar-apk.ps1",
     "start": "node dist/src/main.js"
   },
   "dependencies": {

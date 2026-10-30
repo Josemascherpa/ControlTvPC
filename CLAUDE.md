@@ -152,6 +152,26 @@ ejecuta su JavaScript: sólo se validan los datos y las fuentes.
   Como ahora todo lo pide Edge, conviene `optimizacion/preferir-ipv4.ps1` (como administrador, lo corre la persona).
 - **Límites:** la API es pública pero no oficial y los servidores pueden caerse o cambiar. Sin cuentas ni DRM.
 
+## App de Android TV (APK)
+
+`android/` es la misma app del Cine, pero instalada **dentro del televisor** (Android TV, Google TV,
+Fire TV, TV box). Es Java puro sobre el framework: sin AndroidX, sin Compose y sin librerías, para
+que instale en teles viejas y sin Play Store (queda en ~1 MB).
+
+- `ui/` viaja como *assets* del APK; el servidor de la app los sirve en `http://127.0.0.1:8001/`
+  (origen propio: módulos, IndexedDB y fetch andan; con `file://` no).
+- El mismo servidor abre el puerto **8001** y habla el protocolo Samsung, así la app del celular la
+  encuentra como "Cine TV (<modelo>)" y la maneja con texto y mouse, igual que a la notebook.
+- El servidor le inyecta al `index.html` dos scripts antes del Cine: `js/web/inject.js` (avisos y
+  volumen de la notebook) y `js/web/tv/bridge.js` (compilado de `web/tv/bridge.ts`: teclas, texto,
+  puntero). No se toca el código del Cine.
+- Teclas del mando → eventos de teclado (`ArrowUp`, `Enter`, `Escape`…). Ojo: un evento sintético **no**
+  dispara el clic nativo de un `<button>`; el puente lo hace a mano (si el Cine no canceló el evento).
+- Compilar: `npm run build:typescript` + `npm run apk` (`android/compilar-apk.ps1`). El APK queda en
+  `CineTV-<versión>.apk` en la raíz, firmado con `android/keystore/cinetv.jks` (así actualiza encima).
+- Los cambios de la app **no** se prueban en la notebook: se instalan en un emulador de Android
+  (`adb install -r`, `adb shell input keyevent`) y se miran con capturas.
+
 ## Tele del HDMI
 
 `src/infrastructure/tv/`: identifica el tele por el EDID del HDMI, lo encuentra en el WiFi por SSDP/DLNA
