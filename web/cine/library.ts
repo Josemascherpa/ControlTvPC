@@ -1,3 +1,4 @@
+import { tmdbSize } from './images.js';
 import { asArray, asNullableNumber, asRecord, asString } from '../../shared/json.js';
 import type { KeyValueStore } from './store.js';
 import { LIVE_MANIFEST, liveChannels } from './live.js';
@@ -114,7 +115,7 @@ function safeUrl(value: unknown, protocols: readonly string[]): string {
 function image(value: unknown, size: 'w342' | 'w780'): string {
   const url = safeUrl(value, ['https:']);
   if (!url || url.includes('placeholder.com')) return '';
-  return url.replace(/\/(w\d+|original)\//, `/${size}/`);
+  return tmdbSize(url, size);
 }
 
 function clean(value: unknown, max: number): string {

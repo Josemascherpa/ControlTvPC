@@ -312,3 +312,49 @@ body:not(.is-busy) #activity::after{animation-play-state:paused}
 .episode.skeleton{pointer-events:none;height:132px;position:relative;overflow:hidden}
 /* Sin regla de "movimiento reducido": Windows con los efectos visuales apagados (como esta notebook)
    la activa y apagaba todas las animaciones del Cine. Es una app de tele: anima siempre. */
+
+/* TV adaptable: la portada comparte altura con el catálogo en lugar de reservar 340 px fijos. */
+html:not(.touch-ui) {
+  --rail:clamp(64px,6.5vw,88px);--rail-open:clamp(220px,22vw,288px);
+  --gutter:clamp(88px,9vw,150px);--card-gap:clamp(12px,1.5vw,24px);
+  --card-w:clamp(160px,min(18vw,33vh),320px);--card-h:calc(var(--card-w)*.5625);
+  --rows-top:clamp(200px,38vh,350px);--row-height:calc(var(--card-h) + 52px);
+}
+html:not(.touch-ui) .hero-copy {top:clamp(16px,2.8vh,32px);width:min(64vw,780px);display:flex;flex-direction:column}
+html:not(.touch-ui) #hero h1 {font-size:clamp(26px,3vw,48px);margin-bottom:6px}
+html:not(.touch-ui) #hero .eyebrow {margin-bottom:6px}
+html:not(.touch-ui) #heroMeta {margin-bottom:8px;font-size:clamp(12px,1.1vw,16px)}
+html:not(.touch-ui) #heroOverview {height:2.8em;-webkit-line-clamp:2;font-size:clamp(12px,1.15vw,16px);line-height:1.4;margin-bottom:12px}
+html:not(.touch-ui) #hero .btn {height:clamp(36px,5.5vh,48px);padding:0 clamp(16px,2vw,26px);font-size:clamp(12px,1.2vw,16px)}
+html:not(.touch-ui) #catalog.browsing .rows-viewport {top:clamp(160px,30vh,300px)}
+html:not(.touch-ui) .hero-image {transform:none;transition:opacity .35s ease;will-change:auto}
+html:not(.touch-ui) .rows-viewport {mask-image:none;-webkit-mask-image:none}
+html:not(.touch-ui) .rows-scroll {will-change:auto;transition:transform .28s var(--glide)}
+html:not(.touch-ui) .row {min-height:var(--row-height);animation:none;transition:opacity .18s ease}
+html:not(.touch-ui) .row:not(.is-rendered):not(.skeleton) {visibility:hidden}
+html:not(.touch-ui) .row:not(.is-rendered):not(.skeleton) > .track {display:none}
+html:not(.touch-ui) .row:not(.is-rendered) .shimmer::after,
+html:not(.touch-ui) .card:not(.is-near) .shimmer::after {animation:none}
+html:not(.touch-ui) .row:not(.skeleton) .card:not(.is-near) {visibility:hidden}
+html:not(.touch-ui) .track {transition:transform .26s var(--glide)}
+html:not(.touch-ui) .card {transition:transform .2s var(--ease),opacity .18s ease}
+html:not(.touch-ui) .card:focus {transform:translateY(-3px) scale(1.04);transition:transform .2s var(--ease)}
+html:not(.touch-ui) .poster-wrap {box-shadow:none;transition:none}
+html:not(.touch-ui) .card:focus .poster-wrap {box-shadow:none}
+html:not(.touch-ui) .poster-wrap::after {transition:opacity .15s ease;transform:none}
+html:not(.touch-ui) .row h2 {transition:color .18s ease}
+
+/* El alto real del encabezado decide dónde comienzan las filas: sin huecos por resolución. */
+html:not(.touch-ui) #catalog {position:fixed;inset:0;display:flex;flex-direction:column}
+html:not(.touch-ui) #hero {position:relative;inset:auto;flex:0 0 auto;overflow:visible}
+html:not(.touch-ui) #hero .hero-image,html:not(.touch-ui) #hero .hero-shade {position:fixed;inset:0}
+html:not(.touch-ui) .hero-copy {position:relative;left:auto;top:auto;width:min(78vw,940px);padding:clamp(16px,2.8vh,32px) 0 12px var(--gutter)}
+html:not(.touch-ui) .hero-copy.is-preview .actions {display:none}
+html:not(.touch-ui) .rows-viewport,html:not(.touch-ui) #catalog.browsing .rows-viewport,
+html:not(.touch-ui) #catalog.no-hero .rows-viewport {position:relative;inset:auto;flex:1;min-height:0}
+html:not(.touch-ui) #catalog.no-hero .rows-viewport {margin-top:24px}
+html:not(.touch-ui) #catalog.searching .rows-viewport {margin-top:298px}
+html:not(.touch-ui).overlay-open #catalog,html:not(.touch-ui).overlay-open .rail {visibility:hidden}
+
+html:not(.touch-ui) .hero-image {transition:opacity .3s ease,visibility 0s .3s;visibility:hidden}
+html:not(.touch-ui) .hero-image.is-shown {visibility:visible;transition-delay:0s}

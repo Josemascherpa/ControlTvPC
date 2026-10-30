@@ -5,6 +5,7 @@ import { CATEGORIES, SECTIONS, categoryShelves, sectionShelves, shelfParams, typ
 import { BrowserStore } from './store.js';
 import { tmdbAccess } from './tmdb.js';
 import { Translator } from './translator.js';
+import { tmdbSize } from './images.js';
 
 declare global {
   interface Window { Hls?: typeof Hls }
@@ -246,7 +247,7 @@ function showStatus(element: HTMLElement, text: string, loading = false): void {
 
 /** La imagen grande (destacado y ficha): TMDB w1280, nítida en la tele (la de las tarjetas es w780). */
 function large(url: string): string {
-  return url.replace('/t/p/w780/', '/t/p/w1280/');
+  return tmdbSize(url, innerWidth <= 1280 ? 'w780' : 'w1280');
 }
 
 function metaText(item: Contracts.LibraryTitle, genres: readonly string[] = []): string {
@@ -289,6 +290,11 @@ function subtitleLabel(value: string): string {
  */
 function focusElement(node: HTMLElement | null): void {
   if (!node) return;
+  if (!touchMode && (node === heroPlay || node === heroInfo)) {
+    heroCopy.classList.remove('is-preview');
+    catalogEl.classList.remove('browsing');
+  }
+  if (!touchMode && rowsEl.contains(node)) hydrateAround(node);
   node.focus({ preventScroll: true });
   if (touchMode) return;
   revealInTrack(node);
@@ -305,7 +311,7 @@ function focusElement(node: HTMLElement | null): void {
   const parent = node.parentElement;
   if (parent) rowMemory.set(parent, [...parent.children].indexOf(node));
   if (detailPanel.hidden && player.hidden) {
-    if (rowsEl.contains(node)) hydrateAround(node);
+    catalogEl.classList.toggle('browsing', rowsEl.contains(node));
     revealRow(node);
     spotlightFor(node);
   } else if (!detailPanel.hidden && detailBody.contains(node)) {
@@ -562,7 +568,7 @@ function entryTitle(entry: ProgressEntry): Contracts.LibraryTitle {
 //  - Distancia de dibujo: sólo se bajan y decodifican las imágenes cerca del foco (la fila elegida y
 //    las dos de abajo, unas tarjetas por delante). Medido antes: decodificar en plena animación
 //    trababa cuadros; así llegan decodificadas antes de entrar en pantalla, y las lejanas no gastan.
-const DRAW_AHEAD = 10;
+// Ventana de imágenes: lo visible más dos tarjetas de margen por lado.
 const ROWS_AHEAD = 2;
 const POOL_LIMIT = 400;
 const cardPool = new Map<string, HTMLButtonElement>();
@@ -573,9 +579,11 @@ function cardFor(item: Contracts.LibraryTitle): HTMLButtonElement {
   const key = `${item.type}:${item.id}`;
   const reused = cardPool.get(key);
   const known = reused ? cardItems.get(reused) : undefined;
-  if (reused && !placed.has(reused) && known?.poster === item.poster && known.title === item.title) {
+  if (reused && !placed.has(reused) && known?.poster === item.poster && known.backdrop === item.backdrop && known.title === item.title) {
     reused.classList.remove('pressed');
     placed.add(reused);
+    cardItems.set(reused, item);
+    touchPosters?.observe(reused);
     return reused;
   }
   const card = makeCard(item);
@@ -585,6 +593,13 @@ function cardFor(item: Contracts.LibraryTitle): HTMLButtonElement {
   }
   placed.add(card);
   return card;
+}
+
+function releaseCardImage(card: Element): void {
+  const poster = card.querySelector<HTMLImageElement>('img.poster[src]');
+  if (!poster?.dataset['art']) return;
+  poster.dataset['src'] = poster.dataset['art'];
+  poster.removeAttribute('src');
 }
 
 function hydrateCard(card: Element): void {
@@ -601,15 +616,28 @@ function hydrateAround(node: HTMLElement | null): void {
   const current = node?.closest<HTMLElement>('.row') ?? null;
   const index = current ? Math.max(0, rows.indexOf(current)) : 0;
   const column = current && node?.parentElement ? Math.max(0, [...node.parentElement.children].indexOf(node)) : 0;
-  for (let r = Math.max(0, index - 1); r <= Math.min(rows.length - 1, index + ROWS_AHEAD); r++) {
-    const cards = rows[r]?.querySelector(':scope > .track')?.children;
-    if (!cards) continue;
-    const upTo = Math.min(cards.length, (r === index ? column : 0) + DRAW_AHEAD);
-    for (let c = 0; c < upTo; c++) {
+  const first = rows[0]?.querySelector<HTMLElement>('.card');
+  const cardWidth = first ? Number.parseFloat(getComputedStyle(first).width) || 232 : 232;
+  const visible = Math.ceil(innerWidth / cardWidth) + 2;
+  rows.forEach((row, r) => {
+    const nearRow = r >= index - 1 && r <= index + ROWS_AHEAD;
+    row.classList.toggle('is-rendered', nearRow);
+    const cards = row.querySelector(':scope > .track')?.children;
+    if (!cards) return;
+    const start = r === index ? Math.max(0, column - 2) : 0;
+    const end = (r === index ? column : 0) + visible;
+    for (let c = 0; c < cards.length; c++) {
       const card = cards[c];
-      if (card) hydrateCard(card);
+      if (!(card instanceof HTMLElement)) continue;
+      const near = nearRow && c >= start && c < end;
+      card.classList.toggle('is-near', near);
+      if (near) hydrateCard(card);
+      else if (!touchMode) {
+        // Libera la referencia a la imagen decodificada; la caché HTTP conserva los bytes.
+        releaseCardImage(card);
+      }
     }
-  }
+  });
 }
 
 function makeCard(item: Contracts.LibraryTitle, progress?: ProgressEntry): HTMLButtonElement {
@@ -649,8 +677,9 @@ function makeCard(item: Contracts.LibraryTitle, progress?: ProgressEntry): HTMLB
   poster.addEventListener('load', ready, { once: true });
   poster.addEventListener('error', fallback, { once: true });
   wrap.append(shimmer, poster);
-  const art = item.backdrop || item.poster;
+  const art = item.backdrop ? tmdbSize(item.backdrop, 'w300') : tmdbSize(item.poster, 'w342');
   if (art) {
+    poster.dataset['art'] = art;
     poster.dataset['src'] = art;
   } else {
     fallback();
@@ -1082,8 +1111,15 @@ function appendSkeleton(count: number): void {
 function resetRows(): void {
   rowsEl.classList.remove('is-loading');
   rowsScroll.style.transform = '';
+  catalogEl.classList.remove('browsing');
   activeRow?.classList.remove('is-active');
   activeRow = null;
+  for (const card of cardPool.values()) {
+    if (!card.isConnected) {
+      releaseCardImage(card);
+      touchPosters?.unobserve(card);
+    }
+  }
 }
 
 function renderHero(item: Contracts.LibraryHero): void {
@@ -2484,6 +2520,17 @@ addEventListener('keydown', (event) => {
   else if (!detailPanel.hidden) handleDetailsKey(event);
   else handleCatalogKey(event);
 }, { capture: false });
+
+let resizeFrame = 0;
+addEventListener('resize', () => {
+  if (touchMode || resizeFrame) return;
+  resizeFrame = requestAnimationFrame(() => {
+    resizeFrame = 0;
+    const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    hydrateAround(focused && rowsEl.contains(focused) ? focused : null);
+    if (focused) { revealInTrack(focused); revealRow(focused); }
+  });
+});
 
 // ---------- Eventos de la interfaz ----------
 
