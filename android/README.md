@@ -1,8 +1,10 @@
 # Cine TV — la app para la tele (APK)
 
 El **Cine**, el mismo de la notebook, pero como una app de Android que se instala en el televisor.
-Anda en **Android TV**, **Google TV** (Chromecast, Google TV Streamer), **Fire TV** y en cualquier
-**TV box** que acepte instalar APK (los "como Magis TV").
+Está preparada para **Android TV**, **Google TV** (Chromecast, Google TV Streamer), **Fire TV** y **TV boxes con Android** que acepten instalar APK. La compatibilidad final depende del
+WebView y los códecs del equipo; todavía requiere pruebas en televisores físicos.
+Un Chromecast clásico sin Google TV no permite instalar este APK. Samsung Tizen, LG webOS
+y Roku tampoco ejecutan APKs; pueden usar un dispositivo Android TV conectado por HDMI.
 
 ```
 televisor: app Cine TV (WebView con el Cine adentro)
@@ -127,4 +129,5 @@ web/tv/bridge.ts            el puente que el servidor le inyecta al Cine (teclas
 - **El video no arranca:** el servidor de esa película puede estar caído; probá con *Servidor* o
   *Probar otro servidor*, igual que en la notebook.
 - **La tele la cierra sola:** Android cierra apps en segundo plano. Al abrirla de nuevo vuelve todo;
-  el celular la puede traer al frente mandando cualquier botón.
+  si estás en el inicio del televisor, abrí Cine TV con el mando. Android puede bloquear que
+  el celular abra una app en segundo plano; no se garantiza el control si el sistema cerró su proceso.

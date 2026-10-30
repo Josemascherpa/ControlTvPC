@@ -1,6 +1,9 @@
 package ar.com.josemascherpa.cinetv;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.os.Build;
+import android.window.OnBackInvokedDispatcher;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.net.Uri;
@@ -64,18 +67,25 @@ public final class MainActivity extends Activity implements Screen {
         setContentView(buildUi());
         app.attach(this);
         loadCine();
+        if (Build.VERSION.SDK_INT >= 33) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::back);
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         app.setPaused(false);
+        if (webView != null && !powerOffState) webView.onResume();
         hideSystemBars();
     }
 
     @Override
     protected void onPause() {
         app.setPaused(true);
+        pausePlayback();
+        if (webView != null) webView.onPause();
         super.onPause();
     }
 
@@ -290,6 +300,8 @@ public final class MainActivity extends Activity implements Screen {
         }
     }
 
+    // Android 13+ usa el callback nativo registrado en onCreate; este cubre Android 7–12.
+    @SuppressLint("GestureBackNavigation")
     @Override
     public void onBackPressed() {
         back();

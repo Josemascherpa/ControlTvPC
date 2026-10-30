@@ -25,7 +25,7 @@ import ar.com.josemascherpa.cinetv.server.TvServer;
  * conecta entre sí. Es el equivalente de src/app.ts en la versión de notebook.
  *
  * El servidor vive acá y no en la Activity: si la tele queda en segundo plano, el celular la sigue
- * encontrando y, al mandar un botón, la app vuelve al frente como si fuera el control de una tele.
+ * encontrando mientras Android conserve el proceso. Volver al frente depende del sistema.
  */
 public final class CineTvApp extends Application {
 
@@ -127,16 +127,18 @@ public final class CineTvApp extends Application {
         return screen;
     }
 
-    /** Trae el Cine al frente: el celular "prende" la tele con cualquier botón. */
+    /** Intenta mostrar el Cine; Android puede impedir abrirlo desde segundo plano. */
     private void bringToFront() {
         MainActivity target = screen;
         if (target != null && !paused) return;
+        // El sistema puede bloquear este intento si la app está en segundo plano.
+        // En ese caso se vuelve a abrir desde el launcher del televisor.
         Intent intent = new Intent(this, MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
         try {
             startActivity(intent);
         } catch (RuntimeException e) {
-            Log.w(TAG, "No se pudo traer el Cine al frente: " + e);
+            Log.w(TAG, "No se pudo abrir el Cine: " + e);
         }
     }
 
