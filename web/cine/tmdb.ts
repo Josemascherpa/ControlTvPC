@@ -13,6 +13,16 @@ export interface TmdbAccess {
   readonly headers: Readonly<Record<string, string>>;
 }
 
+/**
+ * El idioma que se le pide a TMDB. Español latino por defecto; acepta castellano y variantes
+ * ("es-ES", "es-AR", "es-CO", "es-419"…). TMDB usa la traducción de esa variante si existe y, si
+ * no, cae a la de España; cualquier cosa rara vuelve al latino.
+ */
+export function tmdbLanguage(value: unknown): string {
+  const text = asString(value).trim();
+  return /^es(?:-[A-Z]{2}|-419)?$/.test(text) ? text : 'es-MX';
+}
+
 /** Acepta las dos credenciales que da TMDB: la "API Key" (v3) o el "token de lectura" (v4). */
 export function tmdbAccess(value: string): TmdbAccess | null {
   const key = value.trim();
@@ -44,9 +54,11 @@ export interface ShelfQuery {
   readonly provider: string;
 }
 
-/** La consulta de TMDB para una fila: tendencias o "discover" con filtros, en español de Latinoamérica. */
-export function tmdbShelf(shelf: ShelfQuery, today: string): { readonly path: string; readonly query: URLSearchParams } {
-  const query = new URLSearchParams({ language: 'es-MX', include_adult: 'false', page: '1' });
+/** La consulta de TMDB para una fila: tendencias o "discover" con filtros, en español. */
+export function tmdbShelf(
+  shelf: ShelfQuery, today: string, language = 'es-MX',
+): { readonly path: string; readonly query: URLSearchParams } {
+  const query = new URLSearchParams({ language, include_adult: 'false', page: '1' });
   if (shelf.trending) return { path: `/trending/${shelf.type}/week`, query };
   const date = shelf.type === 'movie' ? 'primary_release_date' : 'first_air_date';
   // Con un mínimo de votos: sin eso, "las más votadas" son títulos con un solo voto de 10.
@@ -94,8 +106,10 @@ export function withLatinTitles(
 }
 
 /** Búsqueda de TMDB (películas y series, en español): las personas y demás se descartan. */
-export function tmdbSearch(text: string, page: number): { readonly path: string; readonly query: URLSearchParams } {
-  return { path: '/search/multi', query: new URLSearchParams({ query: text, language: 'es-MX', include_adult: 'false', page: String(page) }) };
+export function tmdbSearch(
+  text: string, page: number, language = 'es-MX',
+): { readonly path: string; readonly query: URLSearchParams } {
+  return { path: '/search/multi', query: new URLSearchParams({ query: text, language, include_adult: 'false', page: String(page) }) };
 }
 
 export function tmdbSearchResults(raw: unknown): readonly Readonly<Record<string, unknown>>[] {

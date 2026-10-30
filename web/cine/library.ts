@@ -1,6 +1,7 @@
 import { asArray, asNullableNumber, asRecord, asString } from '../../shared/json.js';
 import type { KeyValueStore } from './store.js';
 import { LIVE_MANIFEST, liveChannels } from './live.js';
+import { IPTV_COUNTRIES, IPTV_PLAYLIST, iptvChannels } from './iptv.js';
 import { isLatin, tmdbResults, tmdbSearch, tmdbSearchResults, tmdbShelf, withLatinTitles, type ShelfQuery, type TmdbAccess } from './tmdb.js';
 import type { Translator } from './translator.js';
 
@@ -19,20 +20,24 @@ function capped(task: Promise<string>, fallback: string, ms = 2500): Promise<str
 const ORIGIN = 'https://api.framextv.xyz';
 const MAX_BYTES = 3 * 1024 * 1024;
 const SUBTITLE_BYTES = 512 * 1024;
-const CACHE_LIMIT = 150;
+const CACHE_LIMIT = 300;
 /** Catálogo, fichas y búsquedas guardados en el navegador como mucho (los más viejos se borran). */
-const STORE_LIMIT = 400;
+const STORE_LIMIT = 900;
 const MAX_PENDING = 6;
-const HOME_TTL = 5 * 60_000;
-const DETAIL_TTL = 10 * 60_000;
-const SEARCH_TTL = 2 * 60_000;
+const HOME_TTL = 15 * 60_000;
+const DETAIL_TTL = 24 * 60 * 60_000;
+const SEARCH_TTL = 10 * 60_000;
 /** El listado de canales en vivo. */
 const LIVE_TTL = 10 * 60_000;
+/** Listas de canales de iptv-org: pesan poco y cambian de a poco. */
+const IPTV_BYTES = 512 * 1024;
+const IPTV_TIMEOUT = 8000;
+const IPTV_BATCH = 4;
 /** Subtítulos en español de un título o episodio, como mucho (los latinos primero). */
 const MAX_SUBTITLES = 8;
-/** Las filas del menú (Películas, Series, Anime, Categorías) cambian poco: media hora. */
-const SHELF_TTL = 30 * 60_000;
-const PROVIDER_TTL = 60_000;
+/** Las filas del menú (Películas, Series, Anime, Categorías) cambian poco: dos horas. */
+const SHELF_TTL = 2 * 60 * 60_000;
+const PROVIDER_TTL = 10 * 60_000;
 /** Una fuente encontrada sirve un rato (sus enlaces vencen): volver a "Reproducir" es instantáneo. */
 const STREAM_TTL = 15 * 60_000;
 /** Cada cuánto se suma el siguiente servidor si el anterior todavía no contestó. */
@@ -244,6 +249,8 @@ export class FramexLibrary {
     private readonly warm = false,
     /** La API oficial de TMDB, si la persona puso su clave (si no, las filas salen de FrameX). */
     private readonly tmdb: TmdbAccess | null = null,
+    /** Idioma de TMDB para títulos y sinopsis: "es-MX" (latino) o "es-ES" (castellano). */
+    private readonly tmdbLanguage = 'es-MX',
   ) {
     void store?.trim(STORE_LIMIT).catch(() => undefined);
   }
@@ -316,8 +323,14 @@ export class FramexLibrary {
     }
     if (op === 'search') return this.inSpanish(await this.search(params), op);
     if (op === 'live') {
-      return this.cached(LIVE_MANIFEST, LIVE_TTL, async () => {
-        const channels = liveChannels(await this.json(LIVE_MANIFEST, 15_000));
+      // Dos fuentes: zlive (su reproductor en un marco aislado) y los canales públicos de iptv-org
+      // (HLS/MP4 con el reproductor propio). Si una falla, la otra igual se muestra.
+      return this.cached('live:all', LIVE_TTL, async () => {
+        const [zlive, iptv] = await Promise.all([
+          this.zliveLive().catch((): readonly Contracts.LibraryChannel[] => []),
+          this.iptvLive().catch((): readonly Contracts.LibraryChannel[] => []),
+        ]);
+        const channels = [...zlive, ...iptv];
         return channels.length ? { channels } : rejected('No hay canales en vivo ahora.');
       });
     }
@@ -331,6 +344,41 @@ export class FramexLibrary {
     const plan = this.plan(op, params);
     if (!isPlanned(plan)) return plan;
     return this.inSpanish(await this.cached(`${ORIGIN}${plan.path}?${plan.query.toString()}`, plan.ttl, () => this.load(plan)), op);
+  }
+
+  /** Los canales de zlive: su listado público (el video lo sirve su propio reproductor). */
+  private async zliveLive(): Promise<readonly Contracts.LibraryChannel[]> {
+    const reply = await this.cached(LIVE_MANIFEST, LIVE_TTL, async () => {
+      const channels = liveChannels(await this.json(LIVE_MANIFEST, 15_000));
+      return channels.length ? { channels } : rejected('No hay canales de zlive ahora.');
+    });
+    return reply.channels ?? [];
+  }
+
+  /**
+   * Los canales de iptv-org, de a cuatro países a la vez: una lista caída no deja sin canales a las
+   * demás. Cada enlace ya viene validado por `iptvChannels` (HTTPS y HLS/MP4).
+   */
+  private async iptvLive(): Promise<readonly Contracts.LibraryChannel[]> {
+    const load = async (country: (typeof IPTV_COUNTRIES)[number]): Promise<readonly Contracts.LibraryChannel[]> => {
+      try {
+        const response = await this.request(IPTV_PLAYLIST(country.code), {
+          signal: AbortSignal.timeout(IPTV_TIMEOUT), redirect: 'error',
+          headers: { Accept: 'application/x-mpegurl,application/vnd.apple.mpegurl,text/plain;q=0.9' },
+        });
+        if (!response.ok || !response.body) return [];
+        return iptvChannels(await this.readText(response.body, IPTV_BYTES), country);
+      } catch {
+        return [];
+      }
+    };
+    const channels: Contracts.LibraryChannel[] = [];
+    for (let start = 0; start < IPTV_COUNTRIES.length; start += IPTV_BATCH) {
+      const batch = IPTV_COUNTRIES.slice(start, start + IPTV_BATCH);
+      const lists = await Promise.all(batch.map(load));
+      for (const list of lists) channels.push(...list);
+    }
+    return channels;
   }
 
   /**
@@ -369,7 +417,7 @@ export class FramexLibrary {
     };
     const genres = value('genres', GENRE_LIST);
     const language = value('language', /^[a-z]{2}$/);
-    const country = value('country', /^[A-Z]{2}$/);
+    const country = value('country', /^[A-Z]{2}(\|[A-Z]{2}){0,19}$/);
     const network = value('network', /^\d{1,7}$/);
     const provider = value('provider', /^\d{1,7}$/);
     if ((type !== 'movie' && type !== 'tv') || (sort !== 'popular' && sort !== 'top' && sort !== 'recent')
@@ -382,7 +430,7 @@ export class FramexLibrary {
     const key = `shelf2:${tmdb ? 'tmdb' : 'framex'}:${JSON.stringify(shelf)}`;
     return this.cached(key, SHELF_TTL, async () => {
       if (tmdb) {
-        const { path, query } = tmdbShelf(shelf, new Date().toISOString().slice(0, 10));
+        const { path, query } = tmdbShelf(shelf, new Date().toISOString().slice(0, 10), this.tmdbLanguage);
         const results = tmdbResults(await this.json(tmdb.url(path, query), 20_000, tmdb.headers), type);
         if (results.every((item) => isLatin(asString(item['title'])))) return { items: this.titles(results, RAIL_ITEMS) };
         // Algún título en otro alfabeto (anime sin nombre en español): la misma fila en inglés, una vez.
@@ -412,7 +460,7 @@ export class FramexLibrary {
       // TMDB busca también por el nombre en español ("El padrino", "Anatomía según Grey") y entrega
       // títulos y sinopsis en español.
       const tmdbPage = async (number: number): Promise<readonly Readonly<Record<string, unknown>>[]> => {
-        const { path, query } = tmdbSearch(text, number);
+        const { path, query } = tmdbSearch(text, number, this.tmdbLanguage);
         return tmdbSearchResults(await this.json(tmdb.url(path, query), SEARCH_TIMEOUT, tmdb.headers));
       };
       const [first, second] = await Promise.all([tmdbPage(1).catch(() => tmdbPage(1)), tmdbPage(2).catch(() => [])]);

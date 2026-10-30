@@ -72,7 +72,10 @@ declare namespace Contracts {
     readonly label: string;
     readonly lang: string;
   }
-  /** Un canal en vivo (zlive.st): se mira con su reproductor, en un marco aislado. */
+  /**
+   * Un canal en vivo. Los de zlive.st se miran con su reproductor en un marco aislado; los de
+   * iptv-org, con el reproductor propio de la app (HLS o MP4 directo, sin iframe).
+   */
   interface LibraryChannel {
     readonly id: string;
     readonly name: string;
@@ -82,8 +85,14 @@ declare namespace Contracts {
     readonly quality: string;
     /** En español (por nombre o país). */
     readonly spanish: boolean;
-    /** Siempre https://zlive.st/embed/…: no se abre ninguna otra dirección. */
+    /** zlive: https://zlive.st/embed/… · iptv-org: el enlace HLS/MP4 del canal. */
     readonly url: string;
+    /** De dónde sale el canal: define si se abre en iframe o en el reproductor propio. */
+    readonly source: 'zlive' | 'iptv';
+    /** Logo del canal (iptv-org), si lo trae; HTTPS. */
+    readonly logo?: string;
+    /** País de la lista de iptv-org ("ar", "mx"…). */
+    readonly country?: string;
   }
   /** Lo que responde /api/library. Sólo viene el campo de la operación pedida. */
   interface LibraryReply {

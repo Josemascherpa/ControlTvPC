@@ -2,8 +2,11 @@ import type Hls from 'hls.js';
 import { asRecord, asString } from '../../shared/json.js';
 import { FramexLibrary, hasSpanishAudio } from './library.js';
 import { CATEGORIES, SECTIONS, categoryShelves, sectionShelves, shelfParams, type Category, type SectionId, type Shelf } from './sections.js';
+import { IPTV_COUNTRIES } from './iptv.js';
+import { favorites, isFavorite, toggleFavorite } from './favorites.js';
+import { nextEpisode } from './episodes.js';
 import { BrowserStore } from './store.js';
-import { tmdbAccess } from './tmdb.js';
+import { tmdbAccess, tmdbLanguage } from './tmdb.js';
 import { Translator } from './translator.js';
 
 declare global {
@@ -62,8 +65,10 @@ const rail = byId<HTMLElement>('rail');
 const railItems = byId<HTMLElement>('railItems');
 const livePanel = byId<HTMLElement>('live');
 const liveFrame = byId<HTMLIFrameElement>('liveFrame');
+const liveVideo = byId<HTMLVideoElement>('liveVideo');
 const liveName = byId<HTMLElement>('liveName');
 const liveLoading = byId<HTMLElement>('liveLoading');
+const liveStatus = byId<HTMLElement>('liveStatus');
 const hero = byId<HTMLElement>('hero');
 const heroImages = [byId<HTMLImageElement>('heroImage'), byId<HTMLImageElement>('heroImageNext')] as const;
 const heroCopy = byId<HTMLElement>('heroCopy');
@@ -92,7 +97,24 @@ const detailLanguage = byId<HTMLElement>('detailLanguage');
 const detailOverview = byId<HTMLElement>('detailOverview');
 const detailCast = byId<HTMLElement>('detailCast');
 const detailPlay = byId<HTMLButtonElement>('detailPlay');
+const detailFavorite = byId<HTMLButtonElement>('detailFavorite');
 const detailServers = byId<HTMLButtonElement>('detailServers');
+/** El círculo que gira dentro de Reproducir mientras se busca la fuente. */
+const playSpinner = document.createElement('span');
+playSpinner.className = 'spinner';
+playSpinner.setAttribute('aria-hidden', 'true');
+
+/**
+ * "Reproducir" queda enfocable mientras carga (así el OK no se escapa a Atrás), pero inerte: el
+ * clic se ignora y el botón se ve con el círculo. No se usa `disabled` porque un botón deshabilitado
+ * no puede tener el foco y el control terminaba cerrardo la ficha.
+ */
+function setPlayLoading(loading: boolean): void {
+  detailPlay.classList.toggle('is-loading', loading);
+  detailPlay.setAttribute('aria-disabled', String(loading));
+  if (loading && !playSpinner.isConnected) detailPlay.prepend(playSpinner);
+  else if (!loading) playSpinner.remove();
+}
 const detailStatus = byId<HTMLElement>('detailStatus');
 const serversEl = byId<HTMLElement>('servers');
 const seasonBar = byId<HTMLElement>('seasonBar');
@@ -189,22 +211,27 @@ function busy(delta: 1 | -1): void {
  * instante y se actualiza por detrás sólo si cambió. Las imágenes las guarda la caché del navegador
  * (TMDB las entrega en WebP y con vencimiento largo).
  */
-const library = readTmdbKey().then((tmdb) => new FramexLibrary(
-  undefined, new Translator(new BrowserStore('traducciones')), new BrowserStore('catalogo'), true, tmdb,
+const library = readSettings().then(({ tmdb, language }) => new FramexLibrary(
+  undefined, new Translator(new BrowserStore('traducciones')), new BrowserStore('catalogo'), true, tmdb, language,
 ));
 
 /**
  * La clave de TMDB de la persona, en ui/ajustes.json ({"tmdb": "…"}; no se sube a git). Sin ese
  * archivo el Cine anda igual, con el catálogo de FrameX (sin Anime ni filtros por idioma o plataforma).
+ * "tmdbLanguage" elige el español de los títulos y sinopsis: "es-MX" (latino, por defecto) o "es-ES".
  */
-async function readTmdbKey(): Promise<ReturnType<typeof tmdbAccess>> {
+async function readSettings(): Promise<{ tmdb: ReturnType<typeof tmdbAccess>; language: string }> {
+  const fallback = { tmdb: null, language: 'es-MX' };
   try {
     const response = await fetch('ajustes.json', { cache: 'no-cache' });
-    if (!response.ok) return null;
+    if (!response.ok) return fallback;
     const raw: unknown = await response.json();
-    return tmdbAccess(asString(asRecord(raw)['tmdb']));
+    return {
+      tmdb: tmdbAccess(asString(asRecord(raw)['tmdb'])),
+      language: tmdbLanguage(asRecord(raw)['tmdbLanguage']),
+    };
   } catch {
-    return null;
+    return fallback;
   }
 }
 
@@ -533,14 +560,70 @@ function saveCurrentProgress(): void {
 }
 
 function recentProgress(): ProgressEntry[] {
-  return readStore()
-    .filter((entry) => entry.t >= 15 && (entry.d === 0 || entry.t / entry.d < 0.95))
-    .sort((a, b) => b.at - a.at)
-    .slice(0, 8);
+  // Un solo lugar por título (si viste varios capítulos de una serie, cuenta el último) y sólo los
+  // 4 más recientes: la fila "Continuar viendo" no crece sin fin.
+  const latest = new Map<string, ProgressEntry>();
+  for (const entry of readStore()) {
+    if (entry.t < 15 || (entry.d > 0 && entry.t / entry.d >= 0.95)) continue;
+    const key = `${entry.type}:${entry.id}`;
+    const previous = latest.get(key);
+    if (!previous || entry.at > previous.at) latest.set(key, entry);
+  }
+  return [...latest.values()].sort((a, b) => b.at - a.at).slice(0, 4);
 }
 
 function entryTitle(entry: ProgressEntry): Contracts.LibraryTitle {
   return { id: entry.id, type: entry.type, title: entry.title, poster: entry.poster, backdrop: '', year: '', rating: '', overview: '' };
+}
+
+// ---------- Favoritos ----------
+
+/** Lo que se guarda: la ficha completa si ya cargó (más datos), o lo que trajo la tarjeta. */
+function favoriteSource(): Contracts.LibraryTitle | null {
+  return currentDetails ?? currentItem;
+}
+
+function updateFavoriteButton(): void {
+  const item = favoriteSource();
+  const saved = item ? isFavorite(item) : false;
+  detailFavorite.textContent = saved ? '★ En favoritos' : '♡ Favoritos';
+  detailFavorite.setAttribute('aria-pressed', String(saved));
+  detailFavorite.classList.toggle('is-favorite', saved);
+}
+
+/** Agrega o quita el título de la ficha. Si se está viendo Favoritos, la lista se rearma sola. */
+function toggleCurrentFavorite(): void {
+  const item = favoriteSource();
+  if (!item) return;
+  const saved = toggleFavorite(item);
+  updateFavoriteButton();
+  toast(saved ? 'Guardado en Favoritos.' : 'Quitado de Favoritos.');
+  if (currentSection === 'favoritos') {
+    renderFavorites();
+    // Si se quitó la tarjeta desde donde se abrió la ficha, al cerrar no hay a dónde volver.
+    if (saved && detailTrigger && !detailTrigger.isConnected) detailTrigger = null;
+  }
+}
+
+/** La sección Favoritos: lo guardado, sin consultar internet (se ve al instante, también sin red). */
+function renderFavorites(): void {
+  hero.hidden = true;
+  catalogEl.classList.add('no-hero');
+  catalogHero = null;
+  rowsEl.replaceChildren();
+  placed = new Set();
+  const saved = favorites();
+  const movies = saved.filter((item) => item.type === 'movie');
+  const series = saved.filter((item) => item.type === 'tv');
+  if (movies.length) appendRow(`Películas (${String(movies.length)})`, movies.map((item) => cardFor(item)));
+  if (series.length) appendRow(`Series y anime (${String(series.length)})`, series.map((item) => cardFor(item)));
+  setStatus(saved.length
+    ? `${String(saved.length)} favoritos · Abrí una ficha y tocá "♡ Favoritos" para sumar o quitar`
+    : 'Todavía no tenés favoritos. Abrí una película, serie o anime y tocá "♡ Favoritos".');
+  resetRows();
+  rebuildNav();
+  hydrateAround(null);
+  if (detailPanel.hidden && !rail.contains(document.activeElement)) focusInitial();
 }
 
 // ---------- Catálogo ----------
@@ -682,6 +765,8 @@ function renderHome(): void {
   placed = new Set();
   const recent = recentProgress();
   if (recent.length) appendRow('Continuar viendo', recent.map((entry) => makeCard(entryTitle(entry), entry)));
+  const saved = favorites();
+  if (saved.length) appendRow('Tus favoritos', saved.slice(0, 20).map((item) => cardFor(item)));
   for (const row of catalogRows) appendRow(row.name, row.items.map((item) => cardFor(item)));
   hydrateAround(null);
   const uniqueCount = new Set(catalogRows.flatMap((row) => row.items).map((item) => `${item.type}:${item.id}`)).size;
@@ -697,9 +782,11 @@ function renderHome(): void {
 const ICONS: Readonly<Record<string, string>> = {
   buscar: 'M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13M15.5 15.5l5 5',
   inicio: 'M3.5 10.5 12 4l8.5 6.5V20a1 1 0 0 1-1 1h-5v-6h-5v6h-5a1 1 0 0 1-1-1z',
+  favoritos: 'M12 20.3 4.6 13a4.9 4.9 0 0 1 7-6.9l.4.4.4-.4a4.9 4.9 0 0 1 7 6.9z',
   peliculas: 'M4 5h16v14H4zM8 5v14M16 5v14M4 9.5h4M4 14.5h4M16 9.5h4M16 14.5h4',
   series: 'M3 7.5h18v12H3zM8 3l4 4.5L16 3',
   anime: 'M12 3.5l2.5 5.4 5.9.7-4.4 4 1.2 5.9L12 16.6l-5.2 2.9 1.2-5.9-4.4-4 5.9-.7z',
+  latino: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M3 12h18M12 3c2.6 2.5 3.9 5.6 3.9 9s-1.3 6.5-3.9 9c-2.6-2.5-3.9-5.6-3.9-9S9.4 5.5 12 3',
   envivo: 'M12 10.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3M8.2 8.2a5.4 5.4 0 0 0 0 7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6M5.3 5.3a9.5 9.5 0 0 0 0 13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4',
   categorias: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
   legal: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 11v6M12 7.5v.5',
@@ -794,6 +881,11 @@ async function openSection(id: SectionId): Promise<void> {
     await loadHome();
     return;
   }
+  if (id === 'favoritos') {
+    beginCatalog(id);
+    renderFavorites();
+    return;
+  }
   const token = beginCatalog(id);
   rowsEl.replaceChildren();
   resetRows();
@@ -810,7 +902,7 @@ async function openSection(id: SectionId): Promise<void> {
   if (token !== catalogToken) return;
   if (!shelves.length) {
     rebuildNav();
-    setStatus('Para ver Anime hace falta la clave gratuita de TMDB (ver el README: "Más títulos con TMDB").');
+    setStatus('Para ver esta sección hace falta la clave gratuita de TMDB (ver el README: "Más títulos con TMDB").');
     focusInitial();
     return;
   }
@@ -896,13 +988,18 @@ function showSectionHero(item: Contracts.LibraryTitle): void {
   }
 }
 
-// ---------- En vivo (zlive.st) ----------
+// ---------- En vivo (zlive + iptv-org) ----------
 
 const LIVE_GROUPS = ['Deportes', 'Fórmula 1', 'Noticias', 'Entretenimiento', 'Infantiles', 'Otros canales'] as const;
+/** Países con fila propia en "En vivo": los demás van juntos en "Resto de Latinoamérica". */
+const LIVE_COUNTRIES = IPTV_COUNTRIES.slice(0, 9);
 let liveTrigger: HTMLElement | null = null;
 let liveTimer = 0;
+let liveHls: Hls | null = null;
+/** Los pedidos de canal se cancelan al cerrar o al abrir otro (uno lento no pisa al nuevo). */
+let liveToken = 0;
 
-/** Los canales: primero los que están en español, después por tema. */
+/** Los canales: TV abierta por país (iptv-org) y los temas de zlive. */
 async function loadLive(token: number): Promise<void> {
   hero.hidden = true;
   catalogEl.classList.add('no-hero');
@@ -913,12 +1010,21 @@ async function loadLive(token: number): Promise<void> {
     const channels = (await api('live')).channels ?? [];
     if (token !== catalogToken) return;
     rowsEl.replaceChildren();
+    const iptv = channels.filter((channel) => channel.source === 'iptv');
+    const zlive = channels.filter((channel) => channel.source !== 'iptv');
+    const priority = new Set(LIVE_COUNTRIES.map((country) => country.code));
     const groups: [string, readonly Contracts.LibraryChannel[]][] = [
-      ['En español', channels.filter((channel) => channel.spanish)],
-      ...LIVE_GROUPS.map((group): [string, readonly Contracts.LibraryChannel[]] => [group, channels.filter((channel) => !channel.spanish && channel.category === group)]),
+      ...LIVE_COUNTRIES.map((country): [string, readonly Contracts.LibraryChannel[]] =>
+        [country.name, iptv.filter((channel) => channel.country === country.code)]),
+      ['Resto de Latinoamérica', iptv.filter((channel) => !priority.has(channel.country ?? '') && channel.country !== 'us')],
+      ['EE. UU. en español', iptv.filter((channel) => channel.country === 'us')],
+      ['Canales en español', zlive.filter((channel) => channel.spanish)],
+      ...LIVE_GROUPS.map((group): [string, readonly Contracts.LibraryChannel[]] =>
+        [group, zlive.filter((channel) => !channel.spanish && channel.category === group)]),
+      ['Otros canales', zlive.filter((channel) => !channel.spanish && !LIVE_GROUPS.includes(channel.category as typeof LIVE_GROUPS[number]))],
     ];
     groups.forEach(([name, list], index) => { appendRow(name, list.map(channelCard), index); });
-    setStatus(`${String(channels.length)} canales en vivo (zlive.st) · Atrás sale del canal`);
+    setStatus(`${String(iptv.length)} canales de TV abierta + ${String(zlive.length)} de zlive · Atrás sale del canal`);
     resetRows();
     rebuildNav();
     if (!rail.contains(document.activeElement)) focusInitial();
@@ -939,55 +1045,159 @@ function channelCard(channel: Contracts.LibraryChannel): HTMLButtonElement {
   const badge = document.createElement('span');
   badge.className = 'live-badge';
   badge.textContent = 'EN VIVO';
+  face.append(badge);
+  if (channel.logo) {
+    const logo = document.createElement('img');
+    logo.className = 'channel-logo';
+    logo.src = channel.logo;
+    logo.alt = '';
+    logo.loading = 'lazy';
+    logo.decoding = 'async';
+    face.append(logo);
+  }
   const name = document.createElement('span');
+  name.className = 'channel-name';
   name.textContent = channel.name;
   const detail = document.createElement('small');
   detail.textContent = [channel.category, channel.region, channel.quality].filter((part) => part !== '').join(' · ');
-  face.append(badge, name, detail);
+  face.append(name, detail);
   card.append(face);
   card.addEventListener('click', () => { openLive(channel); });
   return card;
 }
 
-/** El canal con el reproductor de zlive, en un marco aislado (sin ventanas nuevas ni salir del Cine). */
+/** El canal: los de zlive con su reproductor en un marco aislado; los de iptv-org, con el propio. */
 function openLive(channel: Contracts.LibraryChannel): void {
+  if (channel.source === 'iptv' && !/^https:\/\//.test(channel.url)) return;
   liveTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  liveToken++;
+  const token = liveToken;
   liveName.textContent = channel.name;
   livePanel.hidden = false;
   livePanel.classList.remove('idle');
   liveLoading.hidden = false;
+  liveStatus.hidden = true;
+  liveStatus.textContent = '';
   busy(1);
-  let loaded = false;
+  let done = false;
   const ready = (): void => {
-    if (loaded) return;
-    loaded = true;
+    if (done || token !== liveToken) return;
+    done = true;
     busy(-1);
     liveLoading.hidden = true;
   };
-  liveFrame.onload = (): void => { window.setTimeout(ready, 1500); };
-  window.setTimeout(ready, 12_000);
-  liveFrame.src = channel.url;
+  const fail = (text: string): void => {
+    if (token !== liveToken || done) return;
+    done = true;
+    busy(-1);
+    liveLoading.hidden = true;
+    liveStatus.textContent = text;
+    liveStatus.hidden = false;
+  };
+  if (channel.source === 'iptv') {
+    void openChannel(channel, token, ready, fail);
+  } else {
+    releaseLiveVideo();
+    liveFrame.hidden = false;
+    liveVideo.hidden = true;
+    liveFrame.onload = (): void => { window.setTimeout(ready, 1500); };
+    window.setTimeout(ready, 12_000);
+    liveFrame.src = channel.url;
+  }
   clearTimeout(liveTimer);
   liveTimer = window.setTimeout(() => { livePanel.classList.add('idle'); }, 5000);
 }
 
+/**
+ * Un canal de iptv-org en el reproductor propio: HLS con hls.js (o MP4 directo). Va en vivo, sin
+ * barra de progreso; si el enlace está caído se avisa y se puede elegir otro.
+ */
+async function openChannel(
+  channel: Contracts.LibraryChannel, token: number, ready: () => void, fail: (text: string) => void,
+): Promise<void> {
+  releaseLiveVideo();
+  liveFrame.hidden = true;
+  liveFrame.src = 'about:blank';
+  liveVideo.hidden = false;
+  liveVideo.onplaying = ready;
+  liveVideo.onerror = (): void => { fail('El canal no responde. Probá con otro.'); };
+  window.setTimeout(() => { fail('El canal está tardando o no está disponible. Probá con otro.'); }, 15_000);
+  try {
+    if (/\.mp4(?=$|[?#])/i.test(channel.url)) {
+      liveVideo.src = channel.url;
+      void liveVideo.play().catch(() => {
+        liveStatus.textContent = 'Presioná OK para empezar el canal.';
+        liveStatus.hidden = false;
+      });
+    } else {
+      const Engine = await loadHls();
+      if (token !== liveToken) return;
+      const engine = new Engine({
+        enableWorker: true, lowLatencyMode: true, liveSyncDurationCount: 3,
+        maxBufferLength: 20, backBufferLength: 10,
+      });
+      liveHls = engine;
+      engine.on(Engine.Events.MANIFEST_PARSED, () => {
+        if (token !== liveToken) return;
+        void liveVideo.play().catch(() => {
+          if (token !== liveToken || !liveVideo.paused) return;
+          liveStatus.textContent = 'Presioná OK para empezar el canal.';
+          liveStatus.hidden = false;
+        });
+      });
+      engine.on(Engine.Events.ERROR, (_event, data) => {
+        if (data.fatal && token === liveToken) fail('El canal se cortó o no está disponible. Probá con otro.');
+      });
+      engine.loadSource(channel.url);
+      engine.attachMedia(liveVideo);
+    }
+  } catch {
+    fail('No se pudo abrir el canal. Probá con otro.');
+  }
+}
+
+function releaseLiveVideo(): void {
+  if (liveHls) {
+    liveHls.destroy();
+    liveHls = null;
+  }
+  liveVideo.onplaying = null;
+  liveVideo.onerror = null;
+  liveVideo.pause();
+  liveVideo.removeAttribute('src');
+  liveVideo.load();
+  liveVideo.hidden = true;
+}
+
 function closeLive(): void {
   if (livePanel.hidden) return;
+  liveToken++;
   clearTimeout(liveTimer);
+  releaseLiveVideo();
   liveFrame.onload = null;
   liveFrame.src = 'about:blank';
+  liveFrame.hidden = false;
   livePanel.hidden = true;
+  liveStatus.hidden = true;
   if (!liveLoading.hidden) busy(-1);
   liveLoading.hidden = true;
   focusElement(liveTrigger?.isConnected ? liveTrigger : null);
 }
 
-/** En el canal sólo cuenta Atrás; cualquier otra tecla vuelve a mostrar el nombre un rato. */
+/** En el canal sólo cuenta Atrás (y OK para arrancar si el navegador no dejó solo). */
 function handleLiveKey(event: KeyboardEvent): void {
   event.preventDefault();
   if (event.key === 'Escape') {
     closeLive();
     return;
+  }
+  if (!liveVideo.hidden && (event.key === 'Enter' || event.key === ' ')) {
+    if (liveVideo.paused) {
+      liveStatus.hidden = true;
+      void liveVideo.play().catch(() => undefined);
+    } else {
+      liveVideo.pause();
+    }
   }
   livePanel.classList.remove('idle');
   clearTimeout(liveTimer);
@@ -1420,7 +1630,7 @@ function renderEpisodes(): void {
 
 function rebuildDetailRows(): void {
   detailRows = [];
-  const actions = [detailClose, detailPlay, detailServers].filter((button) => !button.disabled);
+  const actions = [detailClose, detailPlay, detailFavorite, detailServers].filter((button) => !button.disabled);
   detailRows.push(actions);
   if (!serversEl.hidden) {
     const chips = [...serversEl.querySelectorAll<HTMLElement>('.server')];
@@ -1507,6 +1717,7 @@ async function openDetails(
   detailTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   detailPanel.hidden = false;
   document.body.classList.add('sheet-open');
+  updateFavoriteButton();
   detailKind.textContent = item.type === 'tv' ? 'Serie' : 'Película';
   detailTitle.textContent = item.title;
   renderMeta(item, [], null);
@@ -1515,12 +1726,12 @@ async function openDetails(
   detailOverview.textContent = item.overview;
   detailCast.textContent = '';
   showStatus(detailStatus, 'Cargando ficha…', true);
-  detailPlay.disabled = true;
   detailPlay.replaceChildren();
   const icon = document.createElement('span');
   icon.className = 'ico';
   icon.textContent = '▶';
   detailPlay.append(icon, document.createTextNode('Reproducir'));
+  setPlayLoading(true);
   serversEl.hidden = true;
   serversEl.replaceChildren();
   seasonBar.hidden = true;
@@ -1538,13 +1749,14 @@ async function openDetails(
     detailImage.hidden = true;
   }
   detailPanel.classList.add('is-open');
-  focusElement(detailClose);
+  focusElement(detailPlay);
   try {
     const reply = await api('details', { id: item.id, type: item.type });
     if (token !== detailToken) return;
     const details = reply.details;
     if (details) {
       currentDetails = details;
+      updateFavoriteButton();
       renderMeta(details, details.genres, details.runtime, details.seasons.filter((season) => season.number > 0).length);
       detailLanguage.textContent = details.originalLanguage === 'es'
         ? 'Audio original en español.'
@@ -1562,7 +1774,7 @@ async function openDetails(
     if (token !== detailToken) return;
     showStatus(detailStatus, '');
     detailBody.classList.remove('is-loading');
-    detailPlay.disabled = false;
+    setPlayLoading(false);
     rebuildDetailRows();
     if (!options.autoplay) prefetchSource(item, item.type === 'tv' ? currentSeason : 0, item.type === 'tv' ? (options.resume?.episode ?? 1) : 0);
     if (options.autoplay) {
@@ -1572,14 +1784,12 @@ async function openDetails(
       void startPlayback(item, season, episode, name);
       return;
     }
-    if (document.activeElement === detailClose) focusElement(detailPlay);
   } catch (error) {
     if (token !== detailToken) return;
     showStatus(detailStatus, errorText(error));
     detailBody.classList.remove('is-loading');
-    detailPlay.disabled = false;
+    setPlayLoading(false);
     rebuildDetailRows();
-    if (document.activeElement === detailClose) focusElement(detailPlay);
     if (options.autoplay) {
       const season = item.type === 'tv' ? currentSeason : 0;
       const episode = item.type === 'tv' ? (options.resume?.episode ?? 1) : 0;
@@ -1673,28 +1883,37 @@ function applySubtitleMode(): void {
 const SUBTITLE_SIZES = [['Chico', 2.8], ['Mediano', 3.4], ['Grande', 4.1], ['Muy grande', 4.9]] as const;
 /** Distancia desde el borde de abajo de la pantalla (vh). */
 const SUBTITLE_HEIGHTS = [['Baja', 7], ['Media', 14], ['Alta', 22], ['Muy alta', 30]] as const;
+/** Ajustes de sincronización: segundos que se atrasan (positivo) o adelantan (negativo). */
+const SUBTITLE_OFFSETS = [-5, -2, -1, -0.5, 0, 0.5, 1, 2, 5] as const;
 const SUBTITLE_STORE = 'cine:subtitles:v1';
 const subtitleBox = byId<HTMLDivElement>('subtitleBox');
 const subtitleSizeBtn = byId<HTMLButtonElement>('subtitleSizeBtn');
 const subtitleHeightBtn = byId<HTMLButtonElement>('subtitleHeightBtn');
+const subtitleSyncBtn = byId<HTMLButtonElement>('subtitleSyncBtn');
 const subtitleStyle = readSubtitleStyle();
 let cueTrack: TextTrack | null = null;
 let sampleTimer = 0;
 
-function readSubtitleStyle(): { size: number; height: number } {
-  const fallback = { size: 1, height: 2 }; // mediano y alto
+function readSubtitleStyle(): { size: number; height: number; offset: number } {
+  const fallback = { size: 1, height: 2, offset: 0 }; // mediano, alto y sin ajuste
   try {
     const saved: unknown = JSON.parse(localStorage.getItem(SUBTITLE_STORE) ?? 'null');
     if (!isRecord(saved)) return fallback;
     const size = numberValue(saved['size']);
     const height = numberValue(saved['height']);
+    const offset = numberValue(saved['offset']);
     return {
       size: size !== null && size >= 0 && size < SUBTITLE_SIZES.length ? Math.floor(size) : fallback.size,
       height: height !== null && height >= 0 && height < SUBTITLE_HEIGHTS.length ? Math.floor(height) : fallback.height,
+      offset: offset !== null && Math.abs(offset) <= 30 ? offset : fallback.offset,
     };
   } catch {
     return fallback;
   }
+}
+
+function saveSubtitleStyle(): void {
+  try { localStorage.setItem(SUBTITLE_STORE, JSON.stringify(subtitleStyle)); } catch { /* sin guardar: vale para esta vez */ }
 }
 
 function applySubtitleStyle(): void {
@@ -1704,12 +1923,16 @@ function applySubtitleStyle(): void {
   player.style.setProperty('--sub-bottom', `${String(height)}vh`);
   subtitleSizeBtn.textContent = `Tamaño: ${sizeName}`;
   subtitleHeightBtn.textContent = `Altura: ${heightName}`;
+  const offset = subtitleStyle.offset;
+  subtitleSyncBtn.textContent = offset === 0
+    ? 'Sync: 0 s'
+    : `Sync: ${offset > 0 ? '+' : '−'}${String(Math.abs(offset))} s`;
 }
 
 function changeSubtitleStyle(kind: 'size' | 'height'): void {
   const count = kind === 'size' ? SUBTITLE_SIZES.length : SUBTITLE_HEIGHTS.length;
   subtitleStyle[kind] = (subtitleStyle[kind] + 1) % count;
-  try { localStorage.setItem(SUBTITLE_STORE, JSON.stringify(subtitleStyle)); } catch { /* sin guardar: vale para esta vez */ }
+  saveSubtitleStyle();
   applySubtitleStyle();
   // Sin una frase en pantalla, se muestra un ejemplo para ver cómo queda.
   if (!subtitleBox.querySelector('.cue:not(.sample)')) {
@@ -1718,8 +1941,29 @@ function changeSubtitleStyle(kind: 'size' | 'height'): void {
     sample.textContent = 'Así se van a ver los subtítulos';
     subtitleBox.replaceChildren(sample);
     clearTimeout(sampleTimer);
-    sampleTimer = window.setTimeout(renderCues, 2500);
+    sampleTimer = window.setTimeout(() => {
+      subtitleBox.querySelector('.cue.sample')?.remove();
+      renderCues();
+    }, 2500);
   }
+}
+
+/** Abre el menú para atrasar o adelantar los subtítulos (lo que no coincide con el audio). */
+function subtitleSyncMenu(): void {
+  openMenu('Sincronizar subtítulos', SUBTITLE_OFFSETS.map((offset) => {
+    const amount = String(Math.abs(offset));
+    return {
+      label: offset === 0 ? 'Sin ajuste' : `${offset > 0 ? 'Atrasar' : 'Adelantar'} ${amount} s`,
+      detail: offset === 0 ? 'Como viene el archivo' : offset > 0 ? 'Aparecen más tarde' : 'Aparecen más temprano',
+      selected: Math.abs(subtitleStyle.offset - offset) < 0.01,
+      run: () => {
+        subtitleStyle.offset = offset;
+        saveSubtitleStyle();
+        applySubtitleStyle();
+        renderCues();
+      },
+    };
+  }), 'Si no coinciden con lo que se escucha, movelos hasta que entren.');
 }
 
 function watchCues(track: TextTrack | null): void {
@@ -1730,17 +1974,34 @@ function watchCues(track: TextTrack | null): void {
 }
 
 function renderCues(): void {
-  const cues = cueTrack?.activeCues;
+  const track = cueTrack;
   const lines: HTMLElement[] = [];
-  for (let index = 0; cues && index < cues.length; index++) {
-    const cue = cues[index];
-    if (!(cue instanceof VTTCue)) continue;
-    const line = document.createElement('span');
-    line.className = 'cue';
-    line.append(cue.getCueAsHTML()); // cursivas y saltos de línea del subtítulo, como texto (nunca HTML suelto)
-    lines.push(line);
+  const offset = subtitleStyle.offset;
+  // Sin ajuste, el navegador ya sabe cuáles están activos. Con ajuste, se calcula con el reloj del
+  // video corrido: positivo = aparecen más tarde (para cuando los subtítulos se adelantan).
+  if (track && offset === 0) {
+    const cues = track.activeCues;
+    for (let index = 0; cues && index < cues.length; index++) {
+      const cue = cues[index];
+      if (cue instanceof VTTCue) lines.push(cueLine(cue));
+    }
+  } else if (track?.cues && offset !== 0) {
+    const now = video.currentTime + offset;
+    for (let index = 0; index < track.cues.length; index++) {
+      const cue = track.cues[index];
+      if (cue instanceof VTTCue && cue.startTime <= now && cue.endTime >= now) lines.push(cueLine(cue));
+    }
   }
+  // El ejemplo de "cómo se ven" se deja hasta que haya una frase real o venza su tiempo.
+  if (!lines.length && subtitleBox.querySelector('.cue.sample')) return;
   subtitleBox.replaceChildren(...lines);
+}
+
+function cueLine(cue: VTTCue): HTMLElement {
+  const line = document.createElement('span');
+  line.className = 'cue';
+  line.append(cue.getCueAsHTML()); // cursivas y saltos de línea del subtítulo, como texto (nunca HTML suelto)
+  return line;
 }
 
 /**
@@ -1861,11 +2122,8 @@ async function startVideo(source: Contracts.LibrarySource, subtitles: readonly C
 
 function nextContext(item: Contracts.LibraryTitle, season: number, episode: number): PlayContext | null {
   if (item.type !== 'tv') return null;
-  const index = currentEpisodes.findIndex((entry) => entry.season === season && entry.episode === episode);
-  const next = index >= 0 ? currentEpisodes[index + 1] : undefined;
-  return next
-    ? { item, season: next.season, episode: next.episode, name: next.name, next: null }
-    : null;
+  const next = nextEpisode({ season, episode }, currentDetails?.seasons ?? [], currentEpisodes);
+  return next ? { item, season: next.season, episode: next.episode, name: next.name, next: null } : null;
 }
 
 /** Lo que se muestra en el reproductor: confirma si va con audio o con subtítulos en español. */
@@ -1901,13 +2159,16 @@ async function startPlayback(
   resumeAt = options.resumeFrom !== undefined && options.resumeFrom > 5 ? options.resumeFrom : savedTime(key);
   const previous = currentProvider;
   nextBtn.hidden = !playerContext.next;
-  nextBtn.textContent = playerContext.next?.name ? `Siguiente: ${playerContext.next.name}` : 'Siguiente episodio';
+  const following = playerContext.next;
+  nextBtn.textContent = following?.name
+    ? `Siguiente: ${following.name}`
+    : following ? `Siguiente: T${String(following.season)} E${String(following.episode)}` : 'Siguiente episodio';
   releaseVideo();
   const searching = options.needAudio ? 'Buscando un servidor con audio en español…'
     : provider ? 'Conectando con el servidor elegido…' : 'Buscando servidor con audio o subtítulos en español…';
   if (fromDetails) {
     showStatus(detailStatus, searching, true);
-    detailPlay.disabled = true;
+    setPlayLoading(true);
   } else {
     playerStatus.textContent = searching;
     retryBtn.hidden = true;
@@ -1931,7 +2192,7 @@ async function startPlayback(
     currentProvider = reply.provider ?? provider ?? '';
     currentSources = reply.sources ?? [];
     if (fromDetails) {
-      detailPlay.disabled = false;
+      setPlayLoading(false);
       showStatus(detailStatus, '');
       detailPanel.hidden = true;
       document.body.classList.remove('sheet-open');
@@ -1958,7 +2219,7 @@ async function startPlayback(
   } catch (error) {
     if (token !== playToken) return;
     releaseVideo();
-    detailPlay.disabled = false;
+    setPlayLoading(false);
     if (fromDetails) {
       // No se entra al reproductor para mostrar un error: se queda en la ficha.
       player.hidden = true;
@@ -2393,7 +2654,7 @@ function handlePlayerKey(event: KeyboardEvent): void {
   }
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     event.preventDefault();
-    const order = [rewind, toggle, forward, subtitlesBtn, audioBtn, qualityBtn, serverBtn, subtitleSizeBtn, subtitleHeightBtn];
+    const order = [rewind, toggle, forward, subtitlesBtn, subtitleSizeBtn, subtitleHeightBtn, subtitleSyncBtn, audioBtn, qualityBtn, serverBtn];
     if (!nextBtn.hidden) order.push(nextBtn);
     const index = order.indexOf(document.activeElement as HTMLButtonElement);
     const next = order[Math.min(Math.max((index < 0 ? 1 : index) + (event.key === 'ArrowRight' ? 1 : -1), 0), order.length - 1)];
@@ -2525,11 +2786,13 @@ detailClose.addEventListener('click', closeDetails);
 legalBtn.addEventListener('click', openLegal);
 legalClose.addEventListener('click', closeLegal);
 detailPlay.addEventListener('click', () => {
+  if (detailPlay.classList.contains('is-loading')) return;
   const item = currentItem;
   if (!item) return;
   void startPlayback(item, item.type === 'tv' ? currentSeason : 0, item.type === 'tv' ? 1 : 0, '');
 });
 detailServers.addEventListener('click', () => { void toggleServers(); });
+detailFavorite.addEventListener('click', toggleCurrentFavorite);
 playerBack.addEventListener('click', stopPlayer);
 rewind.addEventListener('click', () => { seek(-10); });
 forward.addEventListener('click', () => { seek(10); });
@@ -2539,6 +2802,7 @@ qualityBtn.addEventListener('click', qualityMenu);
 serverBtn.addEventListener('click', () => { void serverMenu(); });
 subtitleSizeBtn.addEventListener('click', () => { changeSubtitleStyle('size'); });
 subtitleHeightBtn.addEventListener('click', () => { changeSubtitleStyle('height'); });
+subtitleSyncBtn.addEventListener('click', subtitleSyncMenu);
 applySubtitleStyle();
 audioBtn.addEventListener('click', audioMenu);
 nextBtn.addEventListener('click', () => {
@@ -2580,11 +2844,14 @@ video.addEventListener('loadedmetadata', () => {
 });
 video.addEventListener('timeupdate', () => {
   updateProgress();
+  // Con ajuste, los subtítulos no cambian en su tiempo original: se recalculan con el reloj del video.
+  if (subtitleStyle.offset !== 0 && cueTrack) renderCues();
   if (Date.now() - lastSaveAt > 5000) {
     lastSaveAt = Date.now();
     saveCurrentProgress();
   }
 });
+video.addEventListener('seeked', renderCues);
 video.addEventListener('ended', () => {
   const context = playerContext;
   if (context && video.duration > 0) {
@@ -2618,17 +2885,9 @@ if ('mediaSession' in navigator) {
   }
 }
 
-// "Reproducir" deshabilitado = se está preparando (ficha cargando, buscando la fuente): un círculo
-// girando en el botón. Sigue solo al estado del botón, esté donde esté el código que lo cambia.
-const playSpinner = document.createElement('span');
-playSpinner.className = 'spinner';
-playSpinner.setAttribute('aria-hidden', 'true');
-new MutationObserver(() => {
-  const loading = detailPlay.disabled;
-  detailPlay.classList.toggle('is-loading', loading);
-  if (loading && !playSpinner.isConnected) detailPlay.prepend(playSpinner);
-  else if (!loading) playSpinner.remove();
-}).observe(detailPlay, { attributes: true, attributeFilter: ['disabled'] });
+// "Reproducir" muestra el círculo mientras se prepara la fuente; el botón queda inerte pero con
+// foco (ver setPlayLoading), así el OK no cierra la ficha sin querer.
+
 
 // Reproductor: el círculo de carga en el centro mientras busca servidor o el video está cargando.
 const playerSpinner = byId<HTMLElement>('playerSpinner');

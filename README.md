@@ -43,19 +43,28 @@ notebook ──HDMI──> tele
 | Pestaña Mouse | Touchpad: mueve la flecha propia de la tele; tocar = clic; dos dedos = ruedita |
 
 A la izquierda está el menú (como Netflix o Disney+ en la tele: sólo íconos; con la flecha izquierda
-se abre): **Buscar, Inicio, Películas, Series, Anime, En vivo, Categorías** (Drama, Policiales,
-Terror…) y **Legal - DMCA**. Recorriendo las filas se ven la elegida y la siguiente.
+se abre): **Buscar, Inicio, Favoritos, Películas, Series, Anime, Latinoamérica, En vivo, Categorías**
+(Drama, Policiales, Terror…) y **Legal - DMCA**. Recorriendo las filas se ven la elegida y la siguiente.
 
 - **Buscar** tiene un teclado en pantalla que se maneja con las flechas; el botón "Escribir en la TV"
   del celular escribe en el mismo buscador.
-- **En vivo:** canales de TV de [zlive.st](https://zlive.st/api) (primero los que están en español),
-  con su propio reproductor en un marco aislado. Atrás sale del canal. Si un canal dice "Stream
-  unavailable", la señal está caída en zlive: probá su versión "Backup" u otro canal.
+- **Favoritos:** en la ficha de cualquier película, serie o anime hay un botón **♡ Favoritos**. Lo
+  guardado aparece en **Tus favoritos** (arriba del inicio) y en la sección **Favoritos** del menú,
+  separado en películas y series. Queda en el navegador: se ve al instante, también sin internet.
+- **En vivo:** dos fuentes de canales de TV. Los de [zlive.st](https://zlive.st/api) (primero los que
+  están en español) se miran con su propio reproductor en un marco aislado; los de
+  [iptv-org](https://github.com/iptv-org/iptv) son TV abierta de Argentina, México, España, Colombia,
+  Chile, Perú, Venezuela, Uruguay, Ecuador y el resto de Latinoamérica, más los canales hispanos de
+  EE. UU. (Telemundo, Univision, TUDN…), y se reproducen con el reproductor de la app (HLS o MP4, sin
+  iframe). Atrás sale del canal. Si un canal dice "Stream unavailable", la señal está caída en su
+  origen: probá su versión "Backup" u otro canal.
 
 En el reproductor, con los controles a la vista (flecha arriba): **Subtítulos, Audio, Calidad y
 Servidor** (cada uno abre un panel con las opciones), **tamaño y altura de los subtítulos** (quedan
-guardados) y siguiente episodio. Si la fuente está en idioma original, Audio y Servidor ofrecen
-"Buscar servidor con audio en español" (retoma en el mismo minuto).
+guardados) y siguiente episodio. El siguiente episodio sigue la serie sola: si era el último de la
+temporada, ofrece el primero de la temporada siguiente (y así hasta la última). Si la fuente está en
+idioma original, Audio y Servidor ofrecen "Buscar servidor con audio en español" (retoma en el mismo
+minuto).
 
 ## Instalar
 
@@ -83,17 +92,36 @@ Para sacarlo del inicio automático: `desinstalar.ps1`.
 ## Más títulos con TMDB (opcional, gratis)
 
 Sin nada más, Películas, Series y Categorías salen del catálogo de FrameX (filtra sólo por tipo y
-género). Con una clave de [TMDB](https://www.themoviedb.org) se suman **Anime**, filas por plataforma
-(Netflix, HBO, Disney+, Prime Video, Apple TV+), **Cine argentino** y **habladas en español**, con
-títulos y sinopsis en español:
+género). Con una clave de [TMDB](https://www.themoviedb.org) se suman **Anime**, **Latinoamérica**
+(cine y series por país: Argentina, México, España, Colombia, Chile, Perú, Venezuela, Uruguay,
+Ecuador, Cuba, República Dominicana; comedias, terror, series latinas y telenovelas por país), filas
+por plataforma (Netflix, HBO, Disney+, Prime Video, Apple TV+), **Cine argentino** y **habladas en
+español**, con títulos y sinopsis en español:
 
 1. Creá una cuenta en themoviedb.org y pedí la clave en *Configuración → API* (uso personal).
 2. Copiá `ui/ajustes.ejemplo.json` como `ui/ajustes.json` y pegá ahí tu **API Key** (o el *token de lectura*).
+   Opcional: `"tmdbLanguage"` elige el español: `"es-MX"` (latino, por defecto), `"es-ES"` (castellano)
+   o variantes como `"es-AR"`, `"es-CO"`, `"es-CL"`, `"es-419"`. TMDB usa esa variante si tiene
+   traducción propia; si no, muestra la de España.
 3. Reabrí el Cine (botón Inicio no alcanza: recargá o reiniciá ControlTv).
 
 `ui/ajustes.json` no se sube a git. TMDB no tiene canales de TV en vivo: las "cadenas" son las
 plataformas que producen las series. Qué títulos tienen audio o subtítulos en español se sabe recién
 al reproducir (lo deciden los servidores): si un título no los tiene, la ficha lo avisa.
+
+## Qué queda guardado (caché)
+
+El Cine guarda en el propio navegador lo que ya bajó, para abrir al instante y no volver a pedirlo:
+
+- **Catálogo, fichas, temporadas y búsquedas** en IndexedDB (`cine`): se muestran al instante y se
+  actualizan por detrás sólo si vencieron (catálogo 15 min, fichas 24 h, filas 2 h, búsquedas 10 min).
+  Hasta 900 registros; los más viejos se borran solos.
+- **Canales en vivo:** la lista completa (zlive + iptv-org) queda 10 min y también se guarda en disco.
+- **Sinopsis traducidas** y **favoritos**, para siempre.
+- **Imágenes:** las guarda la caché HTTP del navegador; no se vuelven a bajar si no cambiaron.
+
+No se guarda video: sólo datos y enlaces. Los favoritos son lo único que se conserva aunque se limpie
+la caché del catálogo.
 
 ## Personalizar
 
@@ -116,7 +144,9 @@ web/
   cine/sections.ts        el menú: secciones, categorías y las filas de cada una (sólo datos)
   cine/tmdb.ts            API oficial de TMDB para las filas y la búsqueda (opcional, clave en ui/ajustes.json)
   cine/live.ts            canales en vivo de zlive.st (su listado público para insertar)
+  cine/iptv.ts            canales de TV abierta de iptv-org por país (HLS/MP4, sin iframe)
   cine/translator.ts      sinopsis en español (una vez por texto)
+  cine/favorites.ts       favoritos guardados en el navegador (películas, series y anime)
   cine/store.ts           lo guardado en el navegador (IndexedDB)
   inject.ts               lo que agrega la notebook: cursor oculto, avisos y barra de volumen
 shared/
